@@ -465,4 +465,6 @@ function ThemeEditor({ state, setState }) {
   );
 }
 
-window.AdminShell = AdminShell;
+// Expose shared primitives so admin-tabs.jsx (loaded in a separate script)
+// can reuse them without duplicating.
+Object.assign(window, { AdminShell, SectionHead, Card, Field, TextInput, UrlInput });

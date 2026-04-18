@@ -208,7 +208,13 @@ function App() {
   });
   useEffect(() => { try { localStorage.setItem('view', view); } catch {} }, [view]);
 
-  const [showBoth, setShowBoth] = useState(!!TWEAKS.showAllScreens);
+  // Dual-view needs ~1280px horizontally. On narrower screens default to the
+  // tab the user picked (defaultView) so they don't land on a blank-looking page.
+  const [showBoth, setShowBoth] = useState(() => {
+    if (typeof window === 'undefined') return !!TWEAKS.showAllScreens;
+    const wide = window.innerWidth >= 1280;
+    return !!TWEAKS.showAllScreens && wide;
+  });
 
   const pageKey = useMemo(() =>
     state.theme + '-' + state.buttons.length + '-' + state.banners.length,
