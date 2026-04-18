@@ -35,6 +35,8 @@ function DashboardTab({ me, state }) {
         <div style={{ padding: '10px 14px', borderRadius: 9, background: 'rgba(180,70,58,0.08)', color: '#B4463A', fontSize: 12, marginBottom: 14 }}>โหลดสถิติไม่สำเร็จ</div>
       )}
 
+      {typeof SystemStatusBanner === 'function' && <SystemStatusBanner/>}
+
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 16 }}>
         <StatCard icon="heart" label="ผู้ดูแล (ใช้งาน)" main={stats?.users?.active ?? '—'} sub={`จากทั้งหมด ${stats?.users?.total ?? '—'}`}/>
         <StatCard icon="sparkle" label="คลิกวันนี้" main={stats?.clicks?.today ?? '—'} sub={`สัปดาห์นี้ ${stats?.clicks?.week ?? '—'}`}/>

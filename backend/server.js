@@ -14,6 +14,20 @@ import { fileURLToPath } from 'node:url';
 import { env } from './config/env.js';
 import { connectDB, disconnectDB } from './db.js';
 import { log } from './utils/logger.js';
+
+// ── Startup feature warnings ────────────────────────────────
+// Surface missing-but-impactful config at boot time so operators notice in
+// logs. The in-app /api/admin/health/features endpoint exposes the same info
+// for UI banners at runtime.
+(function warnMissingFeatures() {
+  const warn = (id, msg) => log.warn({ feature: id }, msg);
+  if (!env.SMTP_HOST) warn('email', 'SMTP_HOST not set — password reset emails will not be delivered');
+  if (!env.TURNSTILE_SECRET) warn('captcha', 'TURNSTILE_SECRET not set — CAPTCHA is disabled');
+  if (!env.PUSH_VAPID_PUBLIC || !env.PUSH_VAPID_PRIVATE) warn('push', 'VAPID keys not set — Web Push disabled');
+  if (!env.REDIS_URL && env.NODE_ENV === 'production') warn('redis', 'REDIS_URL not set in production — rate limits are per-instance only');
+  if (env.NODE_ENV === 'production' && !env.COOKIE_SECURE) log.error({ feature: 'cookie_secure' }, 'COOKIE_SECURE=false in production — session cookies will leak over HTTP');
+  if (env.LOG_TRANSPORT === 'loki' && !env.LOKI_URL) log.error({ feature: 'logs' }, 'LOG_TRANSPORT=loki but LOKI_URL not set');
+})();
 import { globalLimiter } from './middleware/rateLimit.js';
 import { ensureCsrfCookie } from './middleware/csrf.js';
 import { publicRouter } from './routes/public.js';

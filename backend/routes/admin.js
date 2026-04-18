@@ -29,11 +29,137 @@ adminRouter.use(requireAuth);
 adminRouter.use(verifyCsrf);
 
 // Configure web-push VAPID once if keys are set
+let vapidConfigured = false;
 if (env.PUSH_VAPID_PUBLIC && env.PUSH_VAPID_PRIVATE) {
   try {
     webPush.setVapidDetails(env.PUSH_VAPID_SUBJECT, env.PUSH_VAPID_PUBLIC, env.PUSH_VAPID_PRIVATE);
+    vapidConfigured = true;
   } catch (e) { log.warn({ err: e.message }, 'vapid_config_invalid'); }
 }
+
+// ── System health / feature status ─────────────────────────
+// Reports which optional features are configured / working so the admin UI
+// can surface warnings like "email is not set up — password reset will not
+// send actual emails". No sensitive values are leaked — only booleans.
+adminRouter.get('/health/features', async (req, res) => {
+  const checks = [];
+
+  // Email (password reset)
+  const emailOk = !!env.SMTP_HOST;
+  checks.push({
+    id: 'email',
+    label: 'ส่งอีเมล (รีเซ็ตรหัสผ่าน)',
+    status: emailOk ? 'ok' : 'disabled',
+    severity: emailOk ? 'info' : (env.NODE_ENV === 'production' ? 'warn' : 'info'),
+    detail: emailOk
+      ? `SMTP: ${env.SMTP_HOST}:${env.SMTP_PORT || 587}`
+      : 'SMTP_HOST ไม่ได้ตั้ง · การขอรีเซ็ตรหัสจะไม่ส่งอีเมลจริง (เฉพาะ log)',
+    impact: emailOk ? null : 'ผู้ใช้ที่ลืมรหัสจะไม่ได้รับอีเมล',
+    envVars: ['SMTP_HOST', 'SMTP_PORT', 'SMTP_USER', 'SMTP_PASSWORD', 'SMTP_FROM', 'APP_PUBLIC_URL'],
+  });
+
+  // CAPTCHA (Cloudflare Turnstile)
+  const captchaOk = !!env.TURNSTILE_SECRET;
+  checks.push({
+    id: 'captcha',
+    label: 'CAPTCHA ป้องกันบอท',
+    status: captchaOk ? 'ok' : 'disabled',
+    severity: captchaOk ? 'info' : (env.NODE_ENV === 'production' ? 'warn' : 'info'),
+    detail: captchaOk
+      ? 'Cloudflare Turnstile เปิดใช้'
+      : 'TURNSTILE_SECRET ไม่ได้ตั้ง · ฟอร์ม login/forgot-password ไม่มี CAPTCHA',
+    impact: captchaOk ? null : 'ยังมี rate-limit ป้องกันอยู่ แต่ไม่มีการตรวจจับบอท',
+    envVars: ['TURNSTILE_SECRET'],
+  });
+
+  // Web Push (VAPID)
+  const pushOk = !!(env.PUSH_VAPID_PUBLIC && env.PUSH_VAPID_PRIVATE && vapidConfigured);
+  let pushSubCount = 0;
+  if (pushOk) { try { pushSubCount = await PushSubscription.countDocuments({}); } catch {} }
+  checks.push({
+    id: 'push',
+    label: 'Web Push Notifications',
+    status: pushOk ? 'ok' : 'disabled',
+    severity: 'info',
+    detail: pushOk
+      ? `VAPID ตั้งค่าแล้ว · ${pushSubCount} subscriber`
+      : 'PUSH_VAPID_PUBLIC / PUSH_VAPID_PRIVATE ไม่ได้ตั้ง · ปุ่ม subscribe และ broadcast ใช้งานไม่ได้',
+    impact: pushOk ? null : 'ผู้ใช้ไม่สามารถ opt-in รับแจ้งเตือน และ admin ไม่สามารถ broadcast ได้',
+    envVars: ['PUSH_VAPID_PUBLIC', 'PUSH_VAPID_PRIVATE', 'PUSH_VAPID_SUBJECT'],
+  });
+
+  // Redis (shared rate-limit store)
+  const redisOk = !!env.REDIS_URL;
+  checks.push({
+    id: 'redis',
+    label: 'Redis (rate-limit ข้ามอินสแตนซ์)',
+    status: redisOk ? 'ok' : 'disabled',
+    severity: 'info',
+    detail: redisOk
+      ? 'Redis ตั้งค่าแล้ว · rate-limit ใช้ได้ทุก instance'
+      : 'REDIS_URL ไม่ได้ตั้ง · rate-limit เก็บในหน่วยความจำ (process เดียว)',
+    impact: redisOk ? null : 'ถ้าเปิดหลาย instance attacker หลบ rate-limit ได้โดยกระจาย request',
+    envVars: ['REDIS_URL'],
+  });
+
+  // 2FA (TOTP) — global feature always available, but admin may not enable
+  const totpEnabledUsers = await User.countDocuments({ totpEnabled: true });
+  const totalAdmins = await User.countDocuments({ role: 'admin', disabledAt: null });
+  checks.push({
+    id: '2fa',
+    label: 'การยืนยันตัวตน 2 ขั้น (2FA/TOTP)',
+    status: totpEnabledUsers > 0 ? 'ok' : 'partial',
+    severity: totpEnabledUsers === 0 ? 'warn' : 'info',
+    detail: `${totpEnabledUsers}/${totalAdmins} ผู้ดูแลเปิด 2FA แล้ว`,
+    impact: totpEnabledUsers === 0
+      ? 'ยังไม่มีผู้ดูแลเปิด 2FA — บัญชีเสี่ยงถ้ารหัสผ่านรั่ว'
+      : null,
+    envVars: [],
+  });
+
+  // Config cookie security in production
+  const cookieSecureOk = env.NODE_ENV !== 'production' || env.COOKIE_SECURE;
+  checks.push({
+    id: 'cookie_secure',
+    label: 'Cookie Secure Flag',
+    status: cookieSecureOk ? 'ok' : 'broken',
+    severity: cookieSecureOk ? 'info' : 'error',
+    detail: cookieSecureOk
+      ? 'Secure cookie เปิดใช้'
+      : 'COOKIE_SECURE=false ใน production — refresh token ส่งผ่าน plain HTTP ได้',
+    impact: cookieSecureOk ? null : 'Session hijacking risk — ต้องตั้ง COOKIE_SECURE=true',
+    envVars: ['COOKIE_SECURE'],
+  });
+
+  // Log transport
+  checks.push({
+    id: 'logs',
+    label: 'ระบบบันทึก Log',
+    status: env.LOG_TRANSPORT === 'loki' && !env.LOKI_URL ? 'broken' : 'ok',
+    severity: env.LOG_TRANSPORT === 'loki' && !env.LOKI_URL ? 'error' : 'info',
+    detail: env.LOG_TRANSPORT === 'loki' && !env.LOKI_URL
+      ? 'LOG_TRANSPORT=loki แต่ LOKI_URL ไม่ได้ตั้ง — log อาจไม่ได้ส่งออก'
+      : `Transport: ${env.LOG_TRANSPORT}`,
+    impact: env.LOG_TRANSPORT === 'loki' && !env.LOKI_URL
+      ? 'Log ไม่ถูกส่งไป Loki — สูญหายเมื่อ restart'
+      : null,
+    envVars: ['LOG_TRANSPORT', 'LOKI_URL'],
+  });
+
+  const summary = {
+    total: checks.length,
+    ok: checks.filter(c => c.status === 'ok').length,
+    warn: checks.filter(c => c.severity === 'warn').length,
+    error: checks.filter(c => c.severity === 'error').length,
+    disabled: checks.filter(c => c.status === 'disabled').length,
+  };
+
+  res.json({
+    nodeEnv: env.NODE_ENV,
+    summary,
+    features: checks,
+  });
+});
 
 // ── Current user ("me") ─────────────────────────────────────
 adminRouter.get('/me', async (req, res) => {

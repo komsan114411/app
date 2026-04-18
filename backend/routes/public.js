@@ -30,6 +30,11 @@ publicRouter.get('/config', publicReadLimiter, async (req, res) => {
     buttons: publishedButtons(cfg.buttons),   // filter by publishAt / unpublishAt
     contact: cfg.contact,
     featureFlags: cfg.featureFlags || {},
+    capabilities: {
+      emailReset: !!env.SMTP_HOST,
+      pushNotifications: !!(env.PUSH_VAPID_PUBLIC && env.PUSH_VAPID_PRIVATE),
+      captcha: !!env.TURNSTILE_SECRET,
+    },
     updatedAt: cfg.updatedAt,
   };
   cache = { at: now, payload, version: cfg.updatedAt ? new Date(cfg.updatedAt).getTime() : now };

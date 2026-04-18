@@ -215,14 +215,39 @@ function ForgotPasswordForm({ onClose }) {
   const [loginId, setLoginId] = React.useState('');
   const [busy, setBusy] = React.useState(false);
   const [done, setDone] = React.useState(false);
+  const [err, setErr] = React.useState(null);
+  const [emailAvailable, setEmailAvailable] = React.useState(true);
+
+  // Probe capability before showing form so we can warn up-front
+  React.useEffect(() => {
+    (async () => {
+      try {
+        const cfg = await api.getConfig();
+        if (cfg && cfg.capabilities && cfg.capabilities.emailReset === false) {
+          setEmailAvailable(false);
+        }
+      } catch {}
+    })();
+  }, []);
 
   const submit = async (e) => {
     e.preventDefault();
+    setErr(null);
     setBusy(true);
     try {
-      await api.call('/api/auth/forgot-password', { method: 'POST', body: { loginId } });
+      // Use raw fetch so we can read response headers
+      const res = await fetch('/api/auth/forgot-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': (typeof readCookie === 'function' ? (readCookie('__Secure-XSRF-TOKEN') || readCookie('XSRF-TOKEN') || '') : '') },
+        body: JSON.stringify({ loginId }),
+        credentials: 'include',
+      });
+      if (res.status === 429) { setErr('ขอลิงก์บ่อยเกินไป รอสักครู่'); return; }
+      if (res.headers.get('X-Email-Available') === '0') setEmailAvailable(false);
       setDone(true);
-    } catch {}
+    } catch {
+      setErr('เชื่อมต่อเซิร์ฟเวอร์ไม่ได้');
+    }
     finally { setBusy(false); }
   };
 
@@ -232,10 +257,19 @@ function ForgotPasswordForm({ onClose }) {
       <form onSubmit={submit} style={{ width: 360, background: '#fff', borderRadius: 18, padding: 28,
         boxShadow: '0 20px 60px -20px rgba(0,0,0,0.15)' }}>
         <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 8 }}>ลืมรหัสผ่าน</div>
+        {!emailAvailable && (
+          <div style={{ padding: '10px 12px', borderRadius: 9, background: 'rgba(210,150,40,0.12)', color: '#7A5A10', fontSize: 12, lineHeight: 1.5, marginBottom: 12 }}>
+            <strong>การส่งอีเมลยังไม่ได้ตั้งค่า</strong><br/>
+            เซิร์ฟเวอร์นี้ยังไม่ได้ตั้ง SMTP_HOST — การขอรีเซ็ตจะ <u>ไม่ส่งอีเมลจริง</u>.
+            ติดต่อ admin เพื่อรีเซ็ตด้วยตนเอง หรือให้ admin ตั้งค่า SMTP ก่อน
+          </div>
+        )}
         {done ? (
           <>
             <div style={{ fontSize: 12, color: '#6B6458', lineHeight: 1.55, marginBottom: 16 }}>
-              หากมีบัญชีตรงกับอีเมลที่ตั้งไว้ ระบบส่งลิงก์รีเซ็ตให้แล้ว (มีอายุ 30 นาที)
+              {emailAvailable
+                ? 'หากมีบัญชีตรงกับอีเมลที่ตั้งไว้ ระบบส่งลิงก์รีเซ็ตให้แล้ว (มีอายุ 30 นาที)'
+                : 'ระบบรับคำขอแล้ว แต่ <strong>ไม่ได้ส่งอีเมลจริง</strong> เพราะ SMTP ยังไม่ได้ตั้งค่า · ติดต่อ admin'}
             </div>
             <button onClick={onClose} style={{ width: '100%', padding: '10px', borderRadius: 9, border: 'none',
               background: '#1F1B17', color: '#fff', fontFamily: 'inherit', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
@@ -250,11 +284,12 @@ function ForgotPasswordForm({ onClose }) {
             <label style={authLabel}>Login ID</label>
             <input type="text" value={loginId} onChange={e => setLoginId(e.target.value.slice(0, 64))}
               required style={inputStyle}/>
+            {err && <div style={{ marginTop: 10, padding: '8px 10px', borderRadius: 8, background: 'rgba(180,70,58,0.08)', color: '#B4463A', fontSize: 12 }}>{err}</div>}
             <div style={{ display: 'flex', gap: 6, marginTop: 14 }}>
               <button type="button" onClick={onClose} style={{ flex: 1, padding: '10px', borderRadius: 9,
                 border: '1px solid rgba(0,0,0,0.12)', background: '#fff', fontFamily: 'inherit', fontSize: 13, cursor: 'pointer' }}>ยกเลิก</button>
-              <button type="submit" disabled={busy} style={{ flex: 1, padding: '10px', borderRadius: 9, border: 'none',
-                background: '#1F1B17', color: '#fff', fontFamily: 'inherit', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
+              <button type="submit" disabled={busy || !loginId.trim()} style={{ flex: 1, padding: '10px', borderRadius: 9, border: 'none',
+                background: (busy || !loginId.trim()) ? '#8F877C' : '#1F1B17', color: '#fff', fontFamily: 'inherit', fontSize: 13, fontWeight: 600, cursor: (busy || !loginId.trim()) ? 'not-allowed' : 'pointer' }}>
                 {busy ? 'กำลังส่ง…' : 'ส่งลิงก์'}
               </button>
             </div>

@@ -151,6 +151,10 @@ const forgotBody = z.object({
 });
 
 authRouter.post('/forgot-password', forgotLimiter, verifyCaptcha, async (req, res) => {
+  // Signal email availability via header so UI can show an informational
+  // message. This does NOT leak whether the account exists.
+  if (!env.SMTP_HOST) res.set('X-Email-Available', '0');
+
   const parsed = forgotBody.safeParse(req.body);
   // Always return 204 to avoid user enumeration.
   if (!parsed.success) return res.status(204).end();

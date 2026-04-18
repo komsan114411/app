@@ -37,6 +37,7 @@ function Icon({ name, size = 24, color = 'currentColor', stroke = 1.75 }) {
     external:<><path {...p} d="M10 4H5a1 1 0 0 0-1 1v14a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-5"/><path {...p} d="M14 4h6v6M20 4L11 13"/></>,
     eye:  <><path {...p} d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7-10-7-10-7Z"/><circle {...p} cx="12" cy="12" r="3"/></>,
     settings:<><circle {...p} cx="12" cy="12" r="3"/><path {...p} d="M20 12h1M3 12h1M12 3v1M12 20v1M18.4 5.6l-.7.7M6.3 17.7l-.7.7M18.4 18.4l-.7-.7M6.3 6.3l-.7-.7"/></>,
+    bell: <><path {...p} d="M6 16V11a6 6 0 0 1 12 0v5l2 2H4l2-2Z"/><path {...p} d="M10 20a2 2 0 0 0 4 0"/></>,
   };
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">

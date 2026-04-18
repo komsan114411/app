@@ -47,10 +47,56 @@ function TwoFactorSetup({ me, onChanged }) {
   };
 
   const copyCodes = () => {
+    const text = (backupCodes || []).join('\n');
+    const done = () => toast.success('คัดลอก backup codes แล้ว');
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(done).catch(() => fallbackCopy(text, done));
+    } else { fallbackCopy(text, done); }
+  };
+
+  const downloadCodes = () => {
     try {
-      navigator.clipboard.writeText((backupCodes || []).join('\n'));
-      toast.success('คัดลอก backup codes แล้ว');
-    } catch { toast.error('คัดลอกไม่สำเร็จ'); }
+      const header = [
+        '# 2FA Backup Codes',
+        '# Account: ' + (me?.loginId || ''),
+        '# Created: ' + new Date().toISOString(),
+        '# Each code works ONCE. Store in a safe place (password manager / printed).',
+        '',
+      ].join('\n');
+      const body = (backupCodes || []).join('\n');
+      const blob = new Blob([header + body + '\n'], { type: 'text/plain;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `backup-codes-${me?.loginId || 'user'}-${new Date().toISOString().slice(0,10)}.txt`;
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(() => { try { document.body.removeChild(a); URL.revokeObjectURL(url); } catch {} }, 100);
+      toast.success('ดาวน์โหลดแล้ว — เก็บไฟล์ในที่ปลอดภัย');
+    } catch { toast.error('ดาวน์โหลดไม่สำเร็จ'); }
+  };
+
+  const printCodes = () => {
+    try {
+      const w = window.open('', '_blank', 'width=560,height=720');
+      if (!w) { toast.error('เบราว์เซอร์บล็อกหน้าต่างใหม่'); return; }
+      const escHtml = (s) => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+      const rows = (backupCodes || []).map(c => `<li><code>${escHtml(c)}</code></li>`).join('');
+      w.document.write(`<!doctype html><html><head><title>2FA Backup Codes</title>
+<style>body{font-family:system-ui;padding:30px;max-width:460px}
+h1{font-size:18px}code{font-family:ui-monospace,monospace;font-size:14px;padding:2px 6px;background:#f0ead8;border-radius:4px}
+ol{columns:2;gap:20px}li{margin-bottom:8px}
+.warn{background:#fff6d6;border:1px solid #e5c97b;border-radius:8px;padding:10px;font-size:12px;margin-bottom:16px}
+</style></head><body>
+<h1>2FA Backup Codes</h1>
+<div class="warn">Account: <strong>${escHtml(me?.loginId || '')}</strong><br/>
+Created: ${new Date().toLocaleString()}<br/>
+<strong>⚠ Each code works ONCE.</strong> Store securely. Do not share.</div>
+<ol>${rows}</ol>
+<script>window.onload=()=>setTimeout(()=>window.print(),300);</script>
+</body></html>`);
+      w.document.close();
+    } catch { toast.error('เปิดหน้าต่างพิมพ์ไม่สำเร็จ'); }
   };
 
   return (
@@ -102,8 +148,10 @@ function TwoFactorSetup({ me, onChanged }) {
           }}>
             {backupCodes.map((c, i) => <div key={i}>{c}</div>)}
           </div>
-          <div style={{ display: 'flex', gap: 6 }}>
-            <button onClick={copyCodes} style={pillBtn}>คัดลอกทั้งหมด</button>
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            <button onClick={copyCodes} style={pillBtn}>📋 คัดลอก</button>
+            <button onClick={downloadCodes} style={pillBtn}>⬇ ดาวน์โหลด (.txt)</button>
+            <button onClick={printCodes} style={pillBtn}>🖨 พิมพ์</button>
             <button onClick={() => { setBackupCodes(null); setStage('enabled'); }} style={primaryBtn}>เสร็จสิ้น</button>
           </div>
         </div>
@@ -142,6 +190,18 @@ const pwInput = {
   fontFamily: 'inherit', fontSize: 13, color: '#1F1B17',
   boxSizing: 'border-box', outline: 'none',
 };
+
+function fallbackCopy(text, onOk) {
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed'; ta.style.top = '-9999px';
+    document.body.appendChild(ta); ta.select();
+    const ok = document.execCommand('copy');
+    document.body.removeChild(ta);
+    if (ok) onOk?.(); else toast.error('คัดลอกไม่สำเร็จ — กรุณากดดาวน์โหลดแทน');
+  } catch { toast.error('คัดลอกไม่สำเร็จ — กรุณากดดาวน์โหลดแทน'); }
+}
 
 function friendly2faError(code) {
   switch (code) {

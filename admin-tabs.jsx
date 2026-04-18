@@ -126,6 +126,10 @@ function SecurityTab({ onLogout, mustChange = false, onPasswordChanged, me, onMe
         </div>
       )}
 
+      {!mustChange && me?.role === 'admin' && typeof PushBroadcastCard === 'function' && (
+        <PushBroadcastCard/>
+      )}
+
       {!mustChange && typeof SessionList === 'function' && (
         <SessionList/>
       )}
@@ -422,6 +426,7 @@ function AuditTab() {
   const [filter, setFilter] = React.useState('');
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState(null);
+  const [exporting, setExporting] = React.useState(false);
 
   const load = async (resetCursor = true) => {
     setLoading(true); setError(null);
@@ -434,6 +439,27 @@ function AuditTab() {
       setHasMore(!!data.nextCursor);
     } catch (e) { setError(e.message || 'load_failed'); }
     finally { setLoading(false); }
+  };
+
+  const exportCsv = async () => {
+    if (exporting) return;
+    setExporting(true);
+    try {
+      // Plain <a href> cannot attach the Bearer token so it hits 401.
+      // Fetch as blob then trigger a synthetic download.
+      const res = await api.call('/api/admin/audit/export?days=30', { auth: true });
+      const text = typeof res === 'string' ? res : (res && res.text) ? await res.text() : '';
+      const blob = new Blob([text || ''], { type: 'text/csv;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `audit-${new Date().toISOString().slice(0,10)}.csv`;
+      document.body.appendChild(a); a.click();
+      setTimeout(() => { try { document.body.removeChild(a); URL.revokeObjectURL(url); } catch {} }, 100);
+      toast.success('ส่งออก CSV เรียบร้อย');
+    } catch (e) {
+      toast.error(e.message === 'forbidden' ? 'สิทธิ์ไม่พอ' : 'ส่งออกไม่สำเร็จ');
+    } finally { setExporting(false); }
   };
 
   React.useEffect(() => { load(true); /* eslint-disable-next-line */ }, [filter]);
@@ -462,9 +488,10 @@ function AuditTab() {
               <option value="">ทุกกิจกรรม</option>
               {ACTION_TYPES.filter(Boolean).map(a => <option key={a} value={a}>{a}</option>)}
             </select>
-            <a href={api.auditExportUrl(30)} download style={{
-              ...refreshBtn, textDecoration: 'none', color: '#1F1B17',
-            }}>ส่งออก 30 วัน (CSV)</a>
+            <button onClick={exportCsv} disabled={exporting} style={{
+              ...refreshBtn, color: '#1F1B17',
+              opacity: exporting ? 0.6 : 1, cursor: exporting ? 'wait' : 'pointer',
+            }}>{exporting ? 'กำลังส่งออก…' : 'ส่งออก 30 วัน (CSV)'}</button>
           </div>
         }/>
       {error && <div style={errBox}>โหลดไม่สำเร็จ</div>}

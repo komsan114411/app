@@ -1,6 +1,6 @@
 // sw.js — Service worker: offline shell + stale-while-revalidate + web push.
 
-const VERSION = 'v2';
+const VERSION = 'v3';
 const SHELL = 'shell-' + VERSION;
 
 const SHELL_FILES = [
@@ -18,6 +18,8 @@ const SHELL_FILES = [
   './dashboard-tab.jsx',
   './admin-tabs.jsx',
   './admin-app.jsx',
+  './system-status.jsx',
+  './push-setup.jsx',
   './consent-banner.jsx',
   './drag-list.jsx',
   './twofa-setup.jsx',

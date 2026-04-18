@@ -321,6 +321,8 @@ function UserApp({ state, pageKey, onButtonPress }) {
         </div>
       )}
 
+      {typeof PushSubscribeButton === 'function' && <PushSubscribeButton theme={theme}/>}
+
       <div style={{ padding: '0 16px' }}>
         <div style={{
           display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',
