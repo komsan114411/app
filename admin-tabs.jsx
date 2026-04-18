@@ -462,9 +462,17 @@ function AuditTab() {
               <option value="">ทุกกิจกรรม</option>
               {ACTION_TYPES.filter(Boolean).map(a => <option key={a} value={a}>{a}</option>)}
             </select>
-            <a href={api.auditExportUrl(30)} download style={{
-              ...refreshBtn, textDecoration: 'none', color: '#1F1B17',
-            }}>ส่งออก 30 วัน (CSV)</a>
+            <button onClick={async () => {
+              try {
+                const csv = await api.call('/api/admin/audit/export?days=30', { auth: true });
+                const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+                const a = document.createElement('a');
+                a.href = URL.createObjectURL(blob);
+                a.download = `audit-${new Date().toISOString().slice(0,10)}.csv`;
+                a.click();
+                URL.revokeObjectURL(a.href);
+              } catch (e) { toast.error('ส่งออกไม่สำเร็จ'); }
+            }} style={refreshBtn}>ส่งออก 30 วัน (CSV)</button>
           </div>
         }/>
       {error && <div style={errBox}>โหลดไม่สำเร็จ</div>}

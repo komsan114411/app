@@ -3,23 +3,32 @@
 // memory store (default) — fine for a single process.
 
 import rateLimit from 'express-rate-limit';
-import RedisStore from 'rate-limit-redis';
 import { env } from '../config/env.js';
 import { log } from '../utils/logger.js';
 
 let redisClient = null;
+let RedisStoreCls = null;
 
 async function getStore(prefix) {
   if (!env.REDIS_URL) return undefined;   // fall back to memory store
-  if (!redisClient) {
-    const { default: Redis } = await import('ioredis');
-    redisClient = new Redis(env.REDIS_URL, { maxRetriesPerRequest: 2, lazyConnect: false });
-    redisClient.on('error', (e) => log.warn({ err: e.message }, 'redis_error'));
+  try {
+    if (!redisClient) {
+      const { default: Redis } = await import('ioredis');
+      redisClient = new Redis(env.REDIS_URL, { maxRetriesPerRequest: 2, lazyConnect: false });
+      redisClient.on('error', (e) => log.warn({ err: e.message }, 'redis_error'));
+    }
+    if (!RedisStoreCls) {
+      const mod = await import('rate-limit-redis');
+      RedisStoreCls = mod.default || mod.RedisStore;
+    }
+    return new RedisStoreCls({
+      sendCommand: (...args) => redisClient.call(...args),
+      prefix: `rl:${prefix}:`,
+    });
+  } catch (e) {
+    log.warn({ err: e.message }, 'redis_rate_limit_unavailable');
+    return undefined;
   }
-  return new RedisStore({
-    sendCommand: (...args) => redisClient.call(...args),
-    prefix: `rl:${prefix}:`,
-  });
 }
 
 function make(prefix, opts) {
