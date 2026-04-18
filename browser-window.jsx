@@ -1,6 +1,7 @@
 
-// Chrome.jsx — Simplified Chrome browser window (dark theme, macOS)
-// No dependencies, no image assets. All inline styles + inline SVG.
+// Chrome.jsx — Simplified Chrome browser window frame.
+// Responsive: on narrow viewports (<900px) the decorative chrome collapses
+// and the content fills the available width so admin stays usable on mobile.
 
 const CHROME_C = {
   barBg: '#202124',
@@ -20,7 +21,6 @@ function ChromeTrafficLights() {
   );
 }
 
-// Single tab (active has curved scoops)
 function ChromeTab({ title = 'New Tab', active = false }) {
   const curve = (flip) => (
     <svg width="8" height="10" viewBox="0 0 8 10"
@@ -61,9 +61,7 @@ function ChromeTabBar({ tabs = [{ title: 'New Tab' }], activeIndex = 0 }) {
 
 function ChromeToolbar({ url = 'example.com' }) {
   const iconDot = (
-    <div style={{
-      width: 28, height: 28, display: 'flex', alignItems: 'center', justifyContent: 'center',
-    }}>
+    <div style={{ width: 28, height: 28, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
       <div style={{ width: 16, height: 16, borderRadius: '50%', background: CHROME_C.dim, opacity: 0.4 }} />
     </div>
   );
@@ -73,30 +71,55 @@ function ChromeToolbar({ url = 'example.com' }) {
       display: 'flex', alignItems: 'center', gap: 4, padding: '0 8px',
     }}>
       {iconDot}
-      {/* url bar */}
       <div style={{
         flex: 1, height: 30, borderRadius: 15, background: CHROME_C.urlBg,
-        display: 'flex', alignItems: 'center', gap: 8, padding: '0 14px',
-        margin: '0 6px',
+        display: 'flex', alignItems: 'center', gap: 8, padding: '0 14px', margin: '0 6px',
       }}>
         <div style={{ width: 12, height: 12, borderRadius: '50%', background: CHROME_C.dim, opacity: 0.4 }} />
-        <span style={{
-          flex: 1, color: CHROME_C.text, fontSize: 13,
-          fontFamily: 'system-ui, sans-serif',
-        }}>{url}</span>
+        <span style={{ flex: 1, color: CHROME_C.text, fontSize: 13, fontFamily: 'system-ui, sans-serif',
+          whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{url}</span>
       </div>
       {iconDot}
     </div>
   );
 }
 
+function useViewportWidth() {
+  const [w, setW] = React.useState(typeof window !== 'undefined' ? window.innerWidth : 1280);
+  React.useEffect(() => {
+    const onResize = () => setW(window.innerWidth);
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+  return w;
+}
+
 function ChromeWindow({
   tabs = [{ title: 'New Tab' }], activeIndex = 0, url = 'example.com',
   width = 900, height = 600, children,
 }) {
+  const vw = useViewportWidth();
+  const narrow = vw < 900;
+  const w = narrow ? Math.min(vw - 16, width) : width;
+  const h = narrow ? Math.max(520, Math.min(window.innerHeight - 180, height)) : height;
+
+  if (narrow) {
+    return (
+      <div style={{
+        width: w, height: h, borderRadius: 10, overflow: 'hidden',
+        boxShadow: '0 12px 40px -20px rgba(0,0,0,0.2)',
+        background: '#fff', border: '1px solid rgba(0,0,0,0.08)',
+      }}>
+        <div style={{ background: '#fff', overflow: 'auto', height: '100%' }}>
+          {children}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div style={{
-      width, height, borderRadius: 10, overflow: 'hidden',
+      width: w, height: h, borderRadius: 10, overflow: 'hidden',
       boxShadow: '0 24px 80px rgba(0,0,0,0.35), 0 0 0 1px rgba(0,0,0,0.1)',
       display: 'flex', flexDirection: 'column', background: CHROME_C.tabBg,
     }}>

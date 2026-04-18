@@ -1,58 +1,53 @@
-// middleware/rateLimit.js — Tiered limiters.
-// NOTE: in multi-instance deployments, swap MemoryStore for RedisStore.
+// middleware/rateLimit.js — Tiered limiters with optional Redis store.
+// Set REDIS_URL to share state across multiple instances/workers. Otherwise
+// memory store (default) — fine for a single process.
 
 import rateLimit from 'express-rate-limit';
+import RedisStore from 'rate-limit-redis';
+import { env } from '../config/env.js';
+import { log } from '../utils/logger.js';
 
-// Global safety net — blocks runaway bots before they hit route logic.
-export const globalLimiter = rateLimit({
-  windowMs: 60_000,
-  max: 300,
-  standardHeaders: 'draft-7',
-  legacyHeaders: false,
-  keyGenerator: (req) => req.ip,   // TRUST_PROXY already set on app
-  handler: (req, res) => res.status(429).json({ error: 'rate_limited' }),
-});
+let redisClient = null;
 
-// Login: per-IP 5/15min + burst 20/hour
-export const loginLimiter = rateLimit({
-  windowMs: 15 * 60_000,
-  max: 5,
-  standardHeaders: 'draft-7',
-  legacyHeaders: false,
-  skipSuccessfulRequests: true,
-  keyGenerator: (req) => req.ip,
-  handler: (req, res) => res.status(429).json({ error: 'rate_limited' }),
-});
+async function getStore(prefix) {
+  if (!env.REDIS_URL) return undefined;   // fall back to memory store
+  if (!redisClient) {
+    const { default: Redis } = await import('ioredis');
+    redisClient = new Redis(env.REDIS_URL, { maxRetriesPerRequest: 2, lazyConnect: false });
+    redisClient.on('error', (e) => log.warn({ err: e.message }, 'redis_error'));
+  }
+  return new RedisStore({
+    sendCommand: (...args) => redisClient.call(...args),
+    prefix: `rl:${prefix}:`,
+  });
+}
 
-export const loginBurstLimiter = rateLimit({
-  windowMs: 60 * 60_000,
-  max: 20,
-  standardHeaders: 'draft-7',
-  legacyHeaders: false,
-  keyGenerator: (req) => req.ip,
-  handler: (req, res) => res.status(429).json({ error: 'rate_limited' }),
-});
+function make(prefix, opts) {
+  const limiter = rateLimit({
+    standardHeaders: 'draft-7',
+    legacyHeaders: false,
+    handler: (req, res) => res.status(429).json({ error: 'rate_limited' }),
+    ...opts,
+  });
+  // Lazily attach the store on first request so boot isn't blocked if Redis is slow.
+  let init = false;
+  return async (req, res, next) => {
+    if (!init) {
+      init = true;
+      try {
+        const store = await getStore(prefix);
+        if (store) limiter.options.store = store;
+      } catch (e) { log.warn({ err: e.message }, 'rl_store_fallback_memory'); }
+    }
+    return limiter(req, res, next);
+  };
+}
 
-// Public config — cacheable, high volume.
-export const publicReadLimiter = rateLimit({
-  windowMs: 60_000,
-  max: 120,
-  keyGenerator: (req) => req.ip,
-  handler: (req, res) => res.status(429).json({ error: 'rate_limited' }),
-});
-
-// Track events — anti-spam, 1/sec per IP average.
-export const trackLimiter = rateLimit({
-  windowMs: 60_000,
-  max: 60,
-  keyGenerator: (req) => req.ip,
-  handler: (req, res) => res.status(429).json({ error: 'rate_limited' }),
-});
-
-// Admin write — per-user limit (once auth middleware populated req.user).
-export const adminWriteLimiter = rateLimit({
-  windowMs: 60_000,
-  max: 60,
-  keyGenerator: (req) => (req.user && req.user.id) || req.ip,
-  handler: (req, res) => res.status(429).json({ error: 'rate_limited' }),
-});
+export const globalLimiter      = make('global',   { windowMs: 60_000,         max: 300, keyGenerator: r => r.ip });
+export const loginLimiter       = make('login',    { windowMs: 15 * 60_000,    max: 5,   keyGenerator: r => r.ip, skipSuccessfulRequests: true });
+export const loginBurstLimiter  = make('loginb',   { windowMs: 60 * 60_000,    max: 20,  keyGenerator: r => r.ip });
+export const publicReadLimiter  = make('pubread',  { windowMs: 60_000,         max: 120, keyGenerator: r => r.ip });
+export const trackLimiter       = make('track',    { windowMs: 60_000,         max: 60,  keyGenerator: r => r.ip });
+export const adminWriteLimiter  = make('adminw',   { windowMs: 60_000,         max: 60,  keyGenerator: r => (r.user && r.user.id) || r.ip });
+export const forgotLimiter      = make('forgot',   { windowMs: 60 * 60_000,    max: 5,   keyGenerator: r => r.ip });
+export const uploadLimiter      = make('upload',   { windowMs: 60_000,         max: 10,  keyGenerator: r => (r.user && r.user.id) || r.ip });

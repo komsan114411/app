@@ -1,45 +1,28 @@
 // api-client.jsx — Frontend ↔ Backend bridge.
-// - Access token: in-memory only (never localStorage — XSS-resistant)
-// - Refresh token: httpOnly cookie (invisible to JS)
-// - CSRF: double-submit cookie pattern. Server sets XSRF-TOKEN cookie;
-//         we read it and echo in X-CSRF-Token header on mutations.
-// - Falls back to DEFAULT_STATE if API unreachable.
 
-// API_BASE:
-//   - Explicit:  <script>window.API_BASE='https://api.example.com'</script>
-//   - Implicit:  when we're on http(s) and none is set, use same origin ('').
-//                fetch('/api/...') resolves relative to the current page.
-//   - Demo:      only when neither is true (file:// direct), skip backend.
 const API_BASE = (typeof window !== 'undefined' && window.API_BASE) || '';
 const LIVE_POSSIBLE = typeof location !== 'undefined' && location.protocol !== 'file:';
 
 let accessToken = null;
 
-// Server sends __Secure-XSRF-TOKEN over HTTPS (production), XSRF-TOKEN over HTTP (local dev).
 function readCsrf() {
   return readCookie('__Secure-XSRF-TOKEN') || readCookie('XSRF-TOKEN');
 }
-
 function readCookie(name) {
   const m = document.cookie.match(new RegExp('(?:^|; )' + name.replace(/[-.$?*|{}()\[\]\\\/\+^]/g, '\\$&') + '=([^;]*)'));
   return m ? decodeURIComponent(m[1]) : null;
 }
 
-// Single-flight refresh: if two calls get 401 at the same time they share
-// one /refresh request instead of triggering reuse detection.
 let refreshInflight = null;
 
-async function request(path, { method = 'GET', body, auth = false, retry = true } = {}) {
-  const headers = { 'Accept': 'application/json' };
-  if (body !== undefined) headers['Content-Type'] = 'application/json';
+async function request(path, { method = 'GET', body, auth = false, retry = true, headers: extraHeaders } = {}) {
+  const headers = { 'Accept': 'application/json', ...(extraHeaders || {}) };
+  if (body !== undefined && !(body instanceof FormData)) headers['Content-Type'] = 'application/json';
   if (auth && accessToken) headers.Authorization = 'Bearer ' + accessToken;
-
   if (method !== 'GET' && method !== 'HEAD') {
     const csrf = readCsrf();
     if (csrf) headers['X-CSRF-Token'] = csrf;
   }
-
-  // Forward user's analytics-consent choice so server can honor it
   try {
     const consent = localStorage.getItem('analytics_consent');
     if (consent === 'denied') headers['X-Consent'] = '0';
@@ -49,22 +32,22 @@ async function request(path, { method = 'GET', body, auth = false, retry = true 
   try {
     res = await fetch(API_BASE + path, {
       method, headers,
-      body: body !== undefined ? JSON.stringify(body) : undefined,
-      credentials: 'include',
-      cache: 'no-store',
-      redirect: 'error',
+      body: body === undefined
+        ? undefined
+        : (body instanceof FormData ? body : JSON.stringify(body)),
+      credentials: 'include', cache: 'no-store', redirect: 'error',
     });
-  } catch (e) {
-    throw new Error('request_failed');
-  }
+  } catch { throw new Error('request_failed'); }
 
   if (res.status === 401 && auth && retry) {
     const ok = await tryRefresh();
-    if (ok) return request(path, { method, body, auth, retry: false });
+    if (ok) return request(path, { method, body, auth, retry: false, headers: extraHeaders });
   }
   if (res.status === 429) throw new Error('rate_limited');
   if (res.status === 423) throw new Error('account_locked');
   if (res.status === 403) throw new Error('forbidden');
+  if (res.status === 413) throw new Error('file_too_large');
+  if (res.status === 415) throw new Error('unsupported_media_type');
   if (!res.ok) {
     let code = 'request_failed';
     try {
@@ -74,11 +57,13 @@ async function request(path, { method = 'GET', body, auth = false, retry = true 
     throw new Error(code);
   }
   if (res.status === 204) return null;
-  return res.json();
+  const ct = res.headers.get('content-type') || '';
+  if (ct.includes('application/json')) return res.json();
+  return res.text();
 }
 
 async function tryRefresh() {
-  if (refreshInflight) return refreshInflight;   // single-flight
+  if (refreshInflight) return refreshInflight;
   refreshInflight = (async () => {
     try {
       const r = await fetch(API_BASE + '/api/auth/refresh', {
@@ -97,35 +82,48 @@ async function tryRefresh() {
 
 const api = {
   async getConfig()              { return request('/api/config'); },
-  async trackClick(buttonId, label) {
-    try { await request('/api/track', { method: 'POST', body: { buttonId, label } }); }
-    catch {}
+  async trackClick(buttonId, label, variant) {
+    try { await request('/api/track', { method: 'POST', body: { buttonId, label, variant } }); } catch {}
   },
-  async login(email, password) {
-    const data = await request('/api/auth/login', { method: 'POST', body: { email, password } });
+  async login(payload) {
+    const body = typeof payload === 'string' ? arguments.length === 2 ? { loginId: payload, password: arguments[1] } : { loginId: payload } : payload;
+    const data = await request('/api/auth/login', { method: 'POST', body });
     accessToken = data.accessToken;
     return data.user;
   },
-  async logout() {
-    try { await request('/api/auth/logout', { method: 'POST' }); } catch {}
-    accessToken = null;
-  },
+  async logout() { try { await request('/api/auth/logout', { method: 'POST' }); } catch {} accessToken = null; },
   isAuthed() { return !!accessToken; },
+
+  async me()                     { return request('/api/admin/me', { auth: true }); },
+  async updateProfile(body)      { return request('/api/admin/me', { method: 'PATCH', body, auth: true }); },
+  async getStats()               { return request('/api/admin/stats', { auth: true }); },
+  async getTimeseries(days = 7)  { return request(`/api/admin/stats/timeseries?days=${days}`, { auth: true }); },
   async getAdminConfig()         { return request('/api/admin/config', { auth: true }); },
   async patchConfig(patch) {
     return request('/api/admin/config', { method: 'PATCH', body: patch, auth: true });
   },
-  async getAnalytics()           { return request('/api/admin/analytics', { auth: true }); },
-  async forgetMe()               { return request('/api/privacy/forget', { method: 'POST' }); },
+  async uploadBanner(file) {
+    const fd = new FormData(); fd.append('file', file);
+    return request('/api/admin/upload/banner', { method: 'POST', body: fd, auth: true });
+  },
+  async getAnalytics()             { return request('/api/admin/analytics', { auth: true }); },
+  async getButtonAnalytics(id)     { return request(`/api/admin/analytics/button/${encodeURIComponent(id)}`, { auth: true }); },
   async getAudit(opts = {}) {
     const q = new URLSearchParams({ limit: String(opts.limit || 50) });
     if (opts.cursor) q.set('cursor', opts.cursor);
     if (opts.action) q.set('action', opts.action);
     return request('/api/admin/audit?' + q.toString(), { auth: true });
   },
-  async me()                     { return request('/api/admin/me', { auth: true }); },
-  async getStats()               { return request('/api/admin/stats', { auth: true }); },
-  async listUsers()              { return request('/api/admin/users', { auth: true }); },
+  auditExportUrl(days = 30)      { return API_BASE + `/api/admin/audit/export?days=${days}`; },
+  async listUsers(opts = {}) {
+    const q = new URLSearchParams();
+    if (opts.q) q.set('q', opts.q);
+    if (opts.role) q.set('role', opts.role);
+    if (opts.page) q.set('page', String(opts.page));
+    if (opts.limit) q.set('limit', String(opts.limit));
+    const path = q.toString() ? '/api/admin/users?' + q : '/api/admin/users';
+    return request(path, { auth: true });
+  },
   async createUser(body)         { return request('/api/admin/users', { method: 'POST', body, auth: true }); },
   async userAction(id, action)   { return request(`/api/admin/users/${id}/${action}`, { method: 'POST', auth: true }); },
   async changeRole(id, role)     { return request(`/api/admin/users/${id}/role`, { method: 'PATCH', body: { role }, auth: true }); },
@@ -133,22 +131,25 @@ const api = {
   async changePassword(currentPassword, newPassword) {
     return request('/api/admin/me/password', { method: 'POST', body: { currentPassword, newPassword }, auth: true });
   },
-  // raw escape hatch for custom calls
+  async forgetMe()               { return request('/api/privacy/forget', { method: 'POST' }); },
+
+  // Push notifications
+  async vapidKey()               { return request('/api/push/vapid-key'); },
+  async subscribePush(sub)       { return request('/api/push/subscribe', { method: 'POST', body: sub }); },
+  async broadcastPush(body)      { return request('/api/admin/push/broadcast', { method: 'POST', body, auth: true }); },
+
+  // Escape hatch
   call: (path, opts) => request(path, opts),
 };
 
 async function loadInitialState() {
-  if (!API_BASE && !LIVE_POSSIBLE) {
-    // file:// — can't reach a backend
-    return { state: DEFAULT_STATE, live: false, authed: false };
-  }
+  if (!API_BASE && !LIVE_POSSIBLE) return { state: DEFAULT_STATE, live: false, authed: false };
   try {
     const cfg = await api.getConfig();
     const merged = SafeState.sanitize({ ...DEFAULT_STATE, ...cfg }) || DEFAULT_STATE;
     const authed = await tryRefresh();
     return { state: merged, live: true, authed };
   } catch {
-    // Backend unreachable → demo mode
     return { state: DEFAULT_STATE, live: false, authed: false };
   }
 }

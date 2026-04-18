@@ -21,7 +21,8 @@ import { authRouter } from './routes/auth.js';
 import { adminRouter } from './routes/admin.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const STATIC_ROOT = path.resolve(__dirname, '..');   // project root (serves index.html + jsx + icons)
+const STATIC_ROOT = path.resolve(__dirname, '..');
+const UPLOAD_ROOT = path.resolve(env.UPLOAD_DIR);
 
 const app = express();
 
@@ -146,6 +147,15 @@ app.get('/readyz',  (req, res) => res.json({ ok: true }));
 app.use('/api',           publicRouter);
 app.use('/api/auth',      authRouter);
 app.use('/api/admin',     adminRouter);
+
+// ── Uploaded files — banner images etc. served as public (no auth) ─────
+app.use('/uploads', express.static(UPLOAD_ROOT, {
+  dotfiles: 'deny',
+  maxAge: '30d',
+  etag: false,
+  immutable: true,
+  fallthrough: true,
+}));
 
 // ── Static frontend — served from project root (index.html + jsx + icons) ──
 app.use(express.static(STATIC_ROOT, {

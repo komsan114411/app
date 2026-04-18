@@ -1,23 +1,22 @@
 // AdminApp.jsx — browser-based admin panel
 
-function AdminShell({ state, setState, onPreview, liveMode, authed, onLogout, me, onPasswordChanged }) {
+function AdminShell({ state, setState, onPreview, liveMode, authed, onLogout, me, onPasswordChanged, onMeRefresh }) {
   const mustChange = !!(me && me.mustChangePassword);
   const [tab, setTab] = React.useState(mustChange ? 'security' : (liveMode ? 'dashboard' : 'buttons'));
   const theme = THEMES[state.theme] || THEMES.cream;
 
-  // If user MUST change password, lock them to the security tab until done.
   React.useEffect(() => {
     if (mustChange && tab !== 'security') setTab('security');
   }, [mustChange, tab]);
 
   const isAdmin = !me || me.role === 'admin';
+  const dashboardTab = liveMode ? [{ id: 'dashboard', label: 'หน้าหลัก', icon: 'sparkle' }] : [];
   const baseTabs = [
     { id: 'buttons', label: 'ปุ่มเมนู', icon: 'sparkle' },
     { id: 'banner',  label: 'แบนเนอร์', icon: 'image' },
     { id: 'contact', label: 'ติดต่อแอดมิน', icon: 'chat' },
     { id: 'theme',   label: 'ธีม & แบรนด์', icon: 'settings' },
   ];
-  const dashboardTab = liveMode ? [{ id: 'dashboard', label: 'หน้าหลัก', icon: 'sparkle' }] : [];
   const adminOnlyTabs = liveMode ? [
     { id: 'security', label: 'ความปลอดภัย', icon: 'settings' },
     ...(isAdmin ? [
@@ -29,54 +28,82 @@ function AdminShell({ state, setState, onPreview, liveMode, authed, onLogout, me
     ? [{ id: 'security', label: 'เปลี่ยนรหัสผ่าน', icon: 'settings' }]
     : [...dashboardTab, ...baseTabs, ...adminOnlyTabs];
 
+  // Responsive: on narrow viewports (Chrome frame collapsed), stack sidebar
+  const vw = useViewportWidth2();
+  const narrow = vw < 700;
+
   return (
     <div style={{
-      display: 'grid', gridTemplateColumns: '220px 1fr', height: '100%',
+      display: 'grid',
+      gridTemplateColumns: narrow ? '1fr' : '220px 1fr',
+      height: '100%',
       fontFamily: '"IBM Plex Sans Thai", -apple-system, system-ui, sans-serif',
       color: '#1F1B17', background: '#FBFAF7',
     }}>
-      {/* sidebar */}
       <aside style={{
-        background: '#F3EFE7', borderRight: '1px solid rgba(0,0,0,0.06)',
-        padding: '20px 14px', display: 'flex', flexDirection: 'column', gap: 4,
+        background: '#F3EFE7', borderRight: narrow ? 'none' : '1px solid rgba(0,0,0,0.06)',
+        borderBottom: narrow ? '1px solid rgba(0,0,0,0.06)' : 'none',
+        padding: narrow ? '10px' : '20px 14px',
+        display: 'flex',
+        flexDirection: narrow ? 'row' : 'column',
+        flexWrap: narrow ? 'wrap' : 'nowrap',
+        gap: narrow ? 6 : 4,
+        alignItems: narrow ? 'center' : 'stretch',
+        overflowX: narrow ? 'auto' : 'visible',
       }}>
-        <div style={{
-          display: 'flex', alignItems: 'center', gap: 10, padding: '6px 8px 18px',
-        }}>
-          <div style={{
-            width: 28, height: 28, borderRadius: 8, background: '#1F1B17',
-            color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center',
-            fontWeight: 700, fontSize: 13,
-          }}>A</div>
-          <div>
-            <div style={{ fontSize: 13, fontWeight: 600 }}>Admin Console</div>
-            <div style={{ fontSize: 11, color: '#6B6458' }}>v1.0 · {state.appName}</div>
+        {!narrow && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 8px 18px' }}>
+            <div style={{
+              width: 28, height: 28, borderRadius: 8, background: '#1F1B17',
+              color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontWeight: 700, fontSize: 13,
+            }}>A</div>
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 600 }}>Admin Console</div>
+              <div style={{ fontSize: 11, color: '#6B6458' }}>v2.0 · {state.appName}</div>
+            </div>
+            {typeof SavedIndicator === 'function' && (
+              <div style={{ marginLeft: 'auto' }}><SavedIndicator/></div>
+            )}
           </div>
-        </div>
+        )}
+        {narrow && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginRight: 6 }}>
+            <div style={{
+              width: 22, height: 22, borderRadius: 6, background: '#1F1B17',
+              color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontWeight: 700, fontSize: 11,
+            }}>A</div>
+            {typeof SavedIndicator === 'function' && <SavedIndicator/>}
+          </div>
+        )}
         {tabs.map(t => (
           <button key={t.id} onClick={() => setTab(t.id)} style={{
-            display: 'flex', alignItems: 'center', gap: 10,
-            padding: '10px 12px', borderRadius: 10, border: 'none',
-            background: tab === t.id ? '#fff' : 'transparent',
+            display: 'flex', alignItems: 'center', gap: narrow ? 5 : 10,
+            padding: narrow ? '6px 10px' : '10px 12px',
+            borderRadius: narrow ? 999 : 10, border: narrow ? '1px solid rgba(0,0,0,0.08)' : 'none',
+            background: tab === t.id ? '#fff' : (narrow ? '#fff' : 'transparent'),
             color: tab === t.id ? '#1F1B17' : '#6B6458',
-            fontFamily: 'inherit', fontSize: 13, fontWeight: tab === t.id ? 600 : 500,
-            cursor: 'pointer', textAlign: 'left',
+            fontFamily: 'inherit', fontSize: narrow ? 11 : 13, fontWeight: tab === t.id ? 600 : 500,
+            cursor: 'pointer', textAlign: 'left', whiteSpace: 'nowrap',
             boxShadow: tab === t.id ? '0 1px 2px rgba(0,0,0,0.06)' : 'none',
             transition: 'all 180ms ease',
           }}>
-            <Icon name={t.icon} size={16} stroke={1.8}/>
+            <Icon name={t.icon} size={narrow ? 12 : 16} stroke={1.8}/>
             {t.label}
           </button>
         ))}
-        <div style={{ flex: 1 }}/>
-        <button onClick={onPreview} style={{
-          display: 'flex', alignItems: 'center', gap: 8, justifyContent: 'center',
-          padding: '10px 12px', borderRadius: 10, border: '1px solid rgba(0,0,0,0.1)',
-          background: '#fff', fontFamily: 'inherit', fontSize: 12, cursor: 'pointer',
-        }}>
-          <Icon name="eye" size={15} stroke={1.8}/> ดูหน้าผู้ใช้
-        </button>
-        {liveMode && authed && (
+        {!narrow && <div style={{ flex: 1 }}/>}
+        {!narrow && (
+          <button onClick={onPreview} style={{
+            display: 'flex', alignItems: 'center', gap: 8, justifyContent: 'center',
+            padding: '10px 12px', borderRadius: 10, border: '1px solid rgba(0,0,0,0.1)',
+            background: '#fff', fontFamily: 'inherit', fontSize: 12, cursor: 'pointer',
+          }}>
+            <Icon name="eye" size={15} stroke={1.8}/> ดูหน้าผู้ใช้
+          </button>
+        )}
+        {!narrow && liveMode && authed && (
           <button onClick={onLogout} style={{
             marginTop: 6, display: 'flex', alignItems: 'center', gap: 8, justifyContent: 'center',
             padding: '10px 12px', borderRadius: 10, border: '1px solid rgba(180,70,58,0.25)',
@@ -88,25 +115,43 @@ function AdminShell({ state, setState, onPreview, liveMode, authed, onLogout, me
         )}
       </aside>
 
-      {/* main */}
-      <main key={tab} className="ad-tab" style={{ overflow: 'auto', padding: '28px 36px' }}>
+      <main key={tab} className="ad-tab" style={{ overflow: 'auto', padding: narrow ? '18px' : '28px 36px' }}>
         {tab === 'dashboard' && typeof DashboardTab === 'function' && <DashboardTab me={me} state={state}/>}
         {tab === 'buttons'  && <ButtonsEditor state={state} setState={setState}/>}
         {tab === 'banner'   && <BannerEditor state={state} setState={setState}/>}
         {tab === 'contact'  && <ContactEditor state={state} setState={setState}/>}
         {tab === 'theme'    && <ThemeEditor state={state} setState={setState}/>}
-        {tab === 'security' && typeof SecurityTab === 'function' && <SecurityTab onLogout={onLogout} mustChange={mustChange} onPasswordChanged={onPasswordChanged}/>}
+        {tab === 'security' && typeof SecurityTab === 'function' && <SecurityTab onLogout={onLogout} mustChange={mustChange} onPasswordChanged={onPasswordChanged} me={me} onMeRefresh={onMeRefresh}/>}
         {tab === 'users'    && typeof UsersTab    === 'function' && <UsersTab currentUserId={me && me.id}/>}
         {tab === 'audit'    && typeof AuditTab    === 'function' && <AuditTab/>}
+        {narrow && liveMode && authed && (
+          <div style={{ marginTop: 20, paddingTop: 16, borderTop: '1px solid rgba(0,0,0,0.06)', display: 'flex', justifyContent: 'center' }}>
+            <button onClick={onLogout} style={{
+              padding: '10px 20px', borderRadius: 10, border: '1px solid rgba(180,70,58,0.3)',
+              background: '#fff', color: '#B4463A',
+              fontFamily: 'inherit', fontSize: 13, cursor: 'pointer',
+            }}>ออกจากระบบ</button>
+          </div>
+        )}
       </main>
     </div>
   );
 }
 
+function useViewportWidth2() {
+  const [w, setW] = React.useState(typeof window !== 'undefined' ? window.innerWidth : 1280);
+  React.useEffect(() => {
+    const on = () => setW(window.innerWidth);
+    window.addEventListener('resize', on);
+    return () => window.removeEventListener('resize', on);
+  }, []);
+  return w;
+}
+
 function SectionHead({ title, sub, right }) {
   return (
-    <div style={{ display: 'flex', alignItems: 'flex-end', marginBottom: 18 }}>
-      <div style={{ flex: 1 }}>
+    <div style={{ display: 'flex', alignItems: 'flex-end', marginBottom: 18, gap: 10, flexWrap: 'wrap' }}>
+      <div style={{ flex: 1, minWidth: 180 }}>
         <div style={{ fontSize: 20, fontWeight: 700, letterSpacing: -0.2 }}>{title}</div>
         {sub && <div style={{ fontSize: 13, color: '#6B6458', marginTop: 3 }}>{sub}</div>}
       </div>
@@ -197,26 +242,98 @@ function ButtonsEditor({ state, setState }) {
   const add = () => {
     if (state.buttons.length >= 12) return;
     const id = 'q' + Math.random().toString(36).slice(2, 7);
-    setState(s => ({ ...s, buttons: [...s.buttons, { id, label: 'ปุ่มใหม่', sub: '', icon: 'sparkle', url: '' }] }));
+    setState(s => ({ ...s, buttons: [...s.buttons, { id, label: 'ปุ่มใหม่', sub: '', icon: 'sparkle', url: '', tags: [] }] }));
     setEditing(id);
-  };
-  const move = (idx, dir) => {
-    const next = idx + dir;
-    if (next < 0 || next >= state.buttons.length) return;
-    setState(s => {
-      const arr = [...s.buttons];
-      [arr[idx], arr[next]] = [arr[next], arr[idx]];
-      return { ...s, buttons: arr };
-    });
   };
 
   const ICONS = ['leaf','star','tag','book','truck','pin','heart','gift','calendar','chat','camera','music','sparkle'];
+  const renderRow = (b, i, { handle }) => (
+    <Card key={b.id} style={{ padding: 14, marginBottom: 8 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+        {handle}
+        <div style={{
+          width: 40, height: 40, borderRadius: 11, background: THEMES[state.theme].accent,
+          color: THEMES[state.theme].accentInk, display: 'flex',
+          alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+        }}>
+          <Icon name={b.icon} size={20} stroke={2}/>
+        </div>
+        {editing === b.id ? (
+          <div style={{ flex: 1, minWidth: 260, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+            <TextInput maxLength={MAX_LABEL} value={b.label} onChange={e => update(b.id, { label: e.target.value })} placeholder="ชื่อปุ่ม"/>
+            <TextInput maxLength={MAX_SUB} value={b.sub} onChange={e => update(b.id, { sub: e.target.value })} placeholder="คำอธิบาย"/>
+            <div style={{ gridColumn: '1 / -1', display: 'flex', gap: 6, alignItems: 'center' }}>
+              <div style={{ width: 28, height: 28, borderRadius: 7, background: '#F3EFE7', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#6B6458', flexShrink: 0 }}>
+                <Icon name="external" size={14} stroke={1.8}/>
+              </div>
+              <UrlInput value={b.url || ''} onChange={v => update(b.id, { url: v })} placeholder="https://example.com หรือ tel:0812345678"/>
+            </div>
+            <div style={{ gridColumn: '1 / -1', display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+              {ICONS.map(n => (
+                <button key={n} onClick={() => update(b.id, { icon: n })} style={{
+                  width: 32, height: 32, borderRadius: 8,
+                  border: b.icon === n ? '2px solid #1F1B17' : '1px solid rgba(0,0,0,0.1)',
+                  background: b.icon === n ? '#1F1B17' : '#fff',
+                  color: b.icon === n ? '#fff' : '#1F1B17', cursor: 'pointer',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0,
+                }}><Icon name={n} size={16} stroke={1.8}/></button>
+              ))}
+            </div>
+            <div style={{ gridColumn: '1 / -1', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, marginTop: 4 }}>
+              <label style={{ fontSize: 11, color: '#6B6458' }}>
+                เผยแพร่ตั้งแต่
+                <input type="datetime-local" value={toLocalDt(b.publishAt)}
+                  onChange={e => update(b.id, { publishAt: e.target.value ? new Date(e.target.value).toISOString() : null })}
+                  style={{ ...smallInput }}/>
+              </label>
+              <label style={{ fontSize: 11, color: '#6B6458' }}>
+                หยุดเผยแพร่
+                <input type="datetime-local" value={toLocalDt(b.unpublishAt)}
+                  onChange={e => update(b.id, { unpublishAt: e.target.value ? new Date(e.target.value).toISOString() : null })}
+                  style={{ ...smallInput }}/>
+              </label>
+            </div>
+            <div style={{ gridColumn: '1 / -1' }}>
+              <input type="text" value={(b.tags || []).join(', ')}
+                onChange={e => {
+                  const tags = e.target.value.split(',').map(t => t.trim().toLowerCase()).filter(Boolean).slice(0, 6);
+                  update(b.id, { tags });
+                }}
+                placeholder="แท็ก เช่น อาหาร, โปรโมชั่น (คั่นด้วย ,)"
+                style={{ ...smallInput }}/>
+            </div>
+          </div>
+        ) : (
+          <div style={{ flex: 1, minWidth: 200 }}>
+            <div style={{ fontSize: 14, fontWeight: 600 }}>{b.label}</div>
+            <div style={{ fontSize: 12, color: '#6B6458', marginTop: 1, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+              {b.url ? <>
+                <Icon name="external" size={11} stroke={2} color="#8F877C"/>
+                <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 260 }}>{b.url}</span>
+              </> : <span style={{ fontStyle: 'italic', color: '#B4463A', opacity: 0.7 }}>— ยังไม่ได้ใส่ลิงก์ —</span>}
+              {b.publishAt && <span style={{ padding: '1px 6px', borderRadius: 4, background: 'rgba(210,150,40,0.15)', color: '#7A5A10', fontSize: 10 }}>⏱</span>}
+              {(b.tags || []).slice(0, 3).map(t => (
+                <span key={t} style={{ padding: '1px 6px', borderRadius: 4, background: '#F3EFE7', fontSize: 10 }}>#{t}</span>
+              ))}
+            </div>
+            {b.sub && <div style={{ fontSize: 11, color: '#8F877C', marginTop: 2 }}>{b.sub}</div>}
+          </div>
+        )}
+        <button onClick={() => setEditing(editing === b.id ? null : b.id)} style={iconBtn}>
+          <Icon name={editing === b.id ? 'check' : 'edit'} size={15} stroke={1.8}/>
+        </button>
+        <button onClick={() => remove(b.id)} style={{ ...iconBtn, color: '#B4463A' }}>
+          <Icon name="trash" size={15} stroke={1.8}/>
+        </button>
+      </div>
+    </Card>
+  );
 
   return (
     <div>
       <SectionHead
         title="ปุ่มเมนูบนหน้าผู้ใช้"
-        sub={`ตั้งค่าได้ 1–12 ปุ่ม · ขณะนี้ ${state.buttons.length} ปุ่ม`}
+        sub={`ตั้งได้ 1–12 ปุ่ม · ลากลำดับได้ · ตั้งเวลาเผยแพร่ได้ · ขณะนี้ ${state.buttons.length} ปุ่ม`}
         right={
           <button onClick={add} disabled={state.buttons.length >= 12} style={{
             display: 'flex', alignItems: 'center', gap: 6,
@@ -230,85 +347,35 @@ function ButtonsEditor({ state, setState }) {
           </button>
         }
       />
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-        {state.buttons.map((b, i) => (
-          <Card key={b.id} style={{ padding: 14 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                <button onClick={() => move(i, -1)} style={arrowBtn}>▲</button>
-                <button onClick={() => move(i, 1)} style={arrowBtn}>▼</button>
-              </div>
-              <div style={{
-                width: 40, height: 40, borderRadius: 11, background: THEMES[state.theme].accent,
-                color: THEMES[state.theme].accentInk, display: 'flex',
-                alignItems: 'center', justifyContent: 'center', flexShrink: 0,
-              }}>
-                <Icon name={b.icon} size={20} stroke={2}/>
-              </div>
-              {editing === b.id ? (
-                <div style={{ flex: 1, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-                  <TextInput maxLength={MAX_LABEL} value={b.label} onChange={e => update(b.id, { label: e.target.value })} placeholder="ชื่อปุ่ม"/>
-                  <TextInput maxLength={MAX_SUB} value={b.sub} onChange={e => update(b.id, { sub: e.target.value })} placeholder="คำอธิบาย (ไม่บังคับ)"/>
-                  <div style={{ gridColumn: '1 / -1', display: 'flex', gap: 6, alignItems: 'center' }}>
-                    <div style={{
-                      width: 28, height: 28, borderRadius: 7, background: '#F3EFE7',
-                      display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
-                      color: '#6B6458',
-                    }}>
-                      <Icon name="external" size={14} stroke={1.8}/>
-                    </div>
-                    <UrlInput
-                      value={b.url || ''}
-                      onChange={v => update(b.id, { url: v })}
-                      placeholder="https://example.com หรือ tel:0812345678"
-                    />
-                  </div>
-                  <div style={{ gridColumn: '1 / -1', display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                    {ICONS.map(n => (
-                      <button key={n} onClick={() => update(b.id, { icon: n })} style={{
-                        width: 32, height: 32, borderRadius: 8,
-                        border: b.icon === n ? '2px solid #1F1B17' : '1px solid rgba(0,0,0,0.1)',
-                        background: b.icon === n ? '#1F1B17' : '#fff',
-                        color: b.icon === n ? '#fff' : '#1F1B17', cursor: 'pointer',
-                        display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0,
-                      }}><Icon name={n} size={16} stroke={1.8}/></button>
-                    ))}
-                  </div>
-                </div>
-              ) : (
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 14, fontWeight: 600 }}>{b.label}</div>
-                  <div style={{ fontSize: 12, color: '#6B6458', marginTop: 1, display: 'flex', alignItems: 'center', gap: 6 }}>
-                    {b.url ? (
-                      <>
-                        <Icon name="external" size={11} stroke={2} color="#8F877C"/>
-                        <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 260 }}>{b.url}</span>
-                      </>
-                    ) : (
-                      <span style={{ fontStyle: 'italic', color: '#B4463A', opacity: 0.7 }}>— ยังไม่ได้ใส่ลิงก์ —</span>
-                    )}
-                  </div>
-                  {b.sub && <div style={{ fontSize: 11, color: '#8F877C', marginTop: 2 }}>{b.sub}</div>}
-                </div>
-              )}
-              <button onClick={() => setEditing(editing === b.id ? null : b.id)} style={iconBtn}>
-                <Icon name={editing === b.id ? 'check' : 'edit'} size={15} stroke={1.8}/>
-              </button>
-              <button onClick={() => remove(b.id)} style={{ ...iconBtn, color: '#B4463A' }}>
-                <Icon name="trash" size={15} stroke={1.8}/>
-              </button>
-            </div>
-          </Card>
-        ))}
-      </div>
+      {typeof DragList === 'function' ? (
+        <DragList
+          items={state.buttons}
+          onReorder={next => setState(s => ({ ...s, buttons: next }))}
+          itemKey={it => it.id}
+        >
+          {renderRow}
+        </DragList>
+      ) : (
+        state.buttons.map((b, i) => renderRow(b, i, { handle: null }))
+      )}
     </div>
   );
 }
 
-const arrowBtn = {
-  width: 22, height: 18, fontSize: 8, border: '1px solid rgba(0,0,0,0.1)',
-  background: '#FBFAF7', borderRadius: 4, cursor: 'pointer', color: '#6B6458',
-  padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
+function toLocalDt(v) {
+  if (!v) return '';
+  try {
+    const d = new Date(v);
+    const off = d.getTimezoneOffset() * 60000;
+    return new Date(d.getTime() - off).toISOString().slice(0, 16);
+  } catch { return ''; }
+}
+
+const smallInput = {
+  width: '100%', padding: '7px 10px', borderRadius: 7,
+  border: '1px solid rgba(0,0,0,0.12)', background: '#fff',
+  fontFamily: 'inherit', fontSize: 12, color: '#1F1B17',
+  boxSizing: 'border-box', outline: 'none', marginTop: 4,
 };
 const iconBtn = {
   width: 32, height: 32, borderRadius: 8,
@@ -326,14 +393,31 @@ function BannerEditor({ state, setState }) {
   const remove = (id) => setState(s => ({ ...s, banners: s.banners.filter(b => b.id !== id) }));
   const add = () => {
     const id = 'b' + Math.random().toString(36).slice(2, 7);
-    setState(s => ({ ...s, banners: [...s.banners, { id, title: 'แบนเนอร์ใหม่', subtitle: '', tone: 'sky' }] }));
+    setState(s => ({ ...s, banners: [...s.banners, { id, title: 'แบนเนอร์ใหม่', subtitle: '', tone: 'sky', imageUrl: '', linkUrl: '' }] }));
+  };
+
+  const uploadFor = async (id, file) => {
+    if (!file) return;
+    if (!/^image\//.test(file.type)) { toast.error('ต้องเป็นไฟล์รูปภาพ'); return; }
+    if (file.size > 2 * 1024 * 1024) { toast.error('ไฟล์ต้องไม่เกิน 2 MB'); return; }
+    try {
+      toast.info('กำลังอัปโหลด…', 1200);
+      const r = await api.uploadBanner(file);
+      update(id, { imageUrl: r.url });
+      toast.success('อัปโหลดแล้ว');
+    } catch (e) {
+      toast.error(e.message === 'file_too_large' ? 'ไฟล์ใหญ่เกินไป' :
+                  e.message === 'unsupported_media_type' ? 'ชนิดไฟล์ไม่รองรับ' :
+                  e.message === 'forbidden' ? 'ต้อง login' :
+                  'อัปโหลดไม่สำเร็จ');
+    }
   };
 
   return (
     <div>
       <SectionHead
         title="แบนเนอร์ & ภาพหัวหน้าเพจ"
-        sub="เพิ่มได้ไม่จำกัด · จะหมุนอัตโนมัติทุก 3.8 วิ ในหน้าผู้ใช้"
+        sub="เพิ่มได้ไม่จำกัด · อัปโหลดภาพ ≤ 2 MB (JPG/PNG/WEBP) · ธีมสีเป็น fallback ถ้าไม่มีรูป"
         right={
           <button onClick={add} style={{
             display: 'flex', alignItems: 'center', gap: 6, padding: '8px 14px',
@@ -344,16 +428,24 @@ function BannerEditor({ state, setState }) {
           </button>
         }
       />
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 12 }}>
         {state.banners.map(b => (
           <Card key={b.id}>
             <div style={{
-              height: 100, borderRadius: 10, marginBottom: 12,
-              background: BANNER_TONES[b.tone], position: 'relative', overflow: 'hidden',
+              height: 120, borderRadius: 10, marginBottom: 12, position: 'relative', overflow: 'hidden',
+              background: b.imageUrl ? '#000' : BANNER_TONES[b.tone],
               color: '#fff', padding: 14, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end',
             }}>
-              <div style={{ fontSize: 14, fontWeight: 700 }}>{b.title || '—'}</div>
-              <div style={{ fontSize: 11, opacity: 0.9 }}>{b.subtitle || '—'}</div>
+              {b.imageUrl && (
+                <img src={b.imageUrl} alt="" style={{
+                  position: 'absolute', inset: 0, width: '100%', height: '100%',
+                  objectFit: 'cover', opacity: 0.85,
+                }}/>
+              )}
+              <div style={{ position: 'relative', zIndex: 1 }}>
+                <div style={{ fontSize: 14, fontWeight: 700, textShadow: b.imageUrl ? '0 1px 4px rgba(0,0,0,0.5)' : 'none' }}>{b.title || '—'}</div>
+                <div style={{ fontSize: 11, opacity: 0.95, textShadow: b.imageUrl ? '0 1px 4px rgba(0,0,0,0.5)' : 'none' }}>{b.subtitle || '—'}</div>
+              </div>
             </div>
             <Field label="หัวเรื่อง">
               <TextInput maxLength={MAX_LABEL} value={b.title} onChange={e => update(b.id, { title: e.target.value })}/>
@@ -361,7 +453,10 @@ function BannerEditor({ state, setState }) {
             <Field label="คำอธิบาย">
               <TextInput maxLength={MAX_SUB} value={b.subtitle} onChange={e => update(b.id, { subtitle: e.target.value })}/>
             </Field>
-            <Field label="โทนสี">
+            <Field label="ลิงก์เมื่อกด (ไม่บังคับ)">
+              <UrlInput value={b.linkUrl || ''} onChange={v => update(b.id, { linkUrl: v })} placeholder="https://..."/>
+            </Field>
+            <Field label="โทนสี (ใช้เมื่อไม่มีภาพ)">
               <div style={{ display: 'flex', gap: 6 }}>
                 {TONES.map(t => (
                   <button key={t} onClick={() => update(b.id, { tone: t })} style={{
@@ -373,17 +468,27 @@ function BannerEditor({ state, setState }) {
               </div>
             </Field>
             <div style={{ display: 'flex', gap: 6, marginTop: 4 }}>
-              <button style={{
+              <label style={{
                 flex: 1, padding: '8px', borderRadius: 8, cursor: 'pointer',
                 border: '1px dashed rgba(0,0,0,0.15)', background: '#FBFAF7',
                 fontFamily: 'inherit', fontSize: 12, color: '#6B6458',
                 display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
               }}>
-                <Icon name="upload" size={13} stroke={1.8}/> อัปโหลดภาพ
+                <Icon name="upload" size={13} stroke={1.8}/>
+                {b.imageUrl ? 'เปลี่ยนรูป' : 'อัปโหลดรูป'}
+                <input type="file" accept="image/*" style={{ display: 'none' }}
+                  onChange={e => uploadFor(b.id, e.target.files?.[0])}/>
+              </label>
+              {b.imageUrl && (
+                <button onClick={() => update(b.id, { imageUrl: '' })} style={{
+                  ...iconBtn, width: 36, color: '#7A5A10',
+                }} title="ลบรูป">
+                  <Icon name="x" size={14} stroke={2}/>
+                </button>
+              )}
+              <button onClick={() => remove(b.id)} style={{ ...iconBtn, color: '#B4463A', width: 36 }}>
+                <Icon name="trash" size={14} stroke={1.8}/>
               </button>
-              <button onClick={() => remove(b.id)} style={{
-                ...iconBtn, color: '#B4463A', width: 36,
-              }}><Icon name="trash" size={14} stroke={1.8}/></button>
             </div>
           </Card>
         ))}
@@ -398,7 +503,7 @@ function ContactEditor({ state, setState }) {
   return (
     <div>
       <SectionHead title="ปุ่มติดต่อแอดมิน" sub="จะแสดงใต้ปุ่มเมนูบนหน้าผู้ใช้"/>
-      <div style={{ display: 'grid', gridTemplateColumns: '1.1fr 1fr', gap: 16 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 16 }}>
         <Card>
           <Field label="ช่องทางการติดต่อ">
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
@@ -418,7 +523,7 @@ function ContactEditor({ state, setState }) {
               ))}
             </div>
           </Field>
-          <Field label="ข้อความบนปุ่ม (ตั้งชื่อได้)">
+          <Field label="ข้อความบนปุ่ม">
             <TextInput maxLength={MAX_LABEL} value={state.contact.label} onChange={e => setContact({ label: e.target.value })}/>
           </Field>
           <Field label={CHANNELS[state.contact.channel].hint} hint="ข้อมูลที่จะเปิดเมื่อผู้ใช้กดปุ่ม">
@@ -441,14 +546,27 @@ function ThemeEditor({ state, setState }) {
   const set = (patch) => setState(s => ({ ...s, ...patch }));
   return (
     <div>
-      <SectionHead title="ธีม & แบรนด์" sub="เลือกธีมและตั้งชื่อแอป"/>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+      <SectionHead title="ธีม & แบรนด์" sub="ชื่อแอป · ธีม · ภาษา · โหมดมืด (สำหรับหน้าผู้ใช้)"/>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 16 }}>
         <Card>
           <Field label="ชื่อแอป">
             <TextInput maxLength={MAX_APPNAME} value={state.appName} onChange={e => set({ appName: e.target.value })}/>
           </Field>
           <Field label="คำโปรย">
             <TextInput maxLength={MAX_TAGLINE} value={state.tagline} onChange={e => set({ tagline: e.target.value })}/>
+          </Field>
+          <Field label="ภาษาเริ่มต้น">
+            <select value={state.language || 'th'} onChange={e => set({ language: e.target.value })} style={smallInput}>
+              <option value="th">ไทย</option>
+              <option value="en">English</option>
+            </select>
+          </Field>
+          <Field label="โหมดมืดสำหรับหน้าผู้ใช้">
+            <select value={state.darkMode || 'auto'} onChange={e => set({ darkMode: e.target.value })} style={smallInput}>
+              <option value="auto">ตามระบบ</option>
+              <option value="light">สว่างเสมอ</option>
+              <option value="dark">มืดเสมอ</option>
+            </select>
           </Field>
         </Card>
         <Card>
@@ -461,9 +579,7 @@ function ThemeEditor({ state, setState }) {
                   background: t.bg, fontFamily: 'inherit', fontSize: 12, fontWeight: 600,
                   color: t.ink, display: 'flex', alignItems: 'center', gap: 10, textAlign: 'left',
                 }}>
-                  <div style={{
-                    width: 28, height: 28, borderRadius: 7, background: t.accent,
-                  }}/>
+                  <div style={{ width: 28, height: 28, borderRadius: 7, background: t.accent }}/>
                   {k}
                 </button>
               ))}
@@ -475,6 +591,4 @@ function ThemeEditor({ state, setState }) {
   );
 }
 
-// Expose shared primitives so admin-tabs.jsx (loaded in a separate script)
-// can reuse them without duplicating.
 Object.assign(window, { AdminShell, SectionHead, Card, Field, TextInput, UrlInput });

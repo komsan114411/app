@@ -88,6 +88,10 @@
     from { opacity: 0; transform: translateY(20px) scale(0.96); }
     to   { opacity: 1; transform: translateY(0) scale(1); }
   }
+  @keyframes pulse {
+    0%,100% { opacity: 1; }
+    50%     { opacity: 0.4; }
+  }
   .caption {
     font-size: 11px; letter-spacing: 1.2px; text-transform: uppercase;
     color: #8F877C; font-weight: 600; margin-bottom: 10px; text-align: center;
@@ -149,13 +153,20 @@ if ('serviceWorker' in navigator && location.protocol !== 'file:') {
 <script type="text/babel" src="app-state.jsx"></script>
 <script type="text/babel" src="api-client.jsx"></script>
 <script type="text/babel" src="toast.jsx"></script>
+<script type="text/babel" src="online-indicator.jsx"></script>
+<script type="text/babel" src="saved-indicator.jsx"></script>
+<script type="text/babel" src="chart.jsx"></script>
+<script type="text/babel" src="qr-share.jsx"></script>
+<script type="text/babel" src="drag-list.jsx"></script>
 <script type="text/babel" src="ios-frame.jsx"></script>
 <script type="text/babel" src="browser-window.jsx"></script>
 <script type="text/babel" src="user-app.jsx"></script>
 <script type="text/babel" src="auth-gate.jsx"></script>
-<script type="text/babel" src="dashboard-tab.jsx"></script>
-<script type="text/babel" src="admin-tabs.jsx"></script>
+<script type="text/babel" src="twofa-setup.jsx"></script>
+<script type="text/babel" src="session-list.jsx"></script>
 <script type="text/babel" src="admin-app.jsx"></script>
+<script type="text/babel" src="admin-tabs.jsx"></script>
+<script type="text/babel" src="dashboard-tab.jsx"></script>
 <script type="text/babel" src="consent-banner.jsx"></script>
 
 <script type="text/babel" data-presets="react">
@@ -296,21 +307,34 @@ function App() {
     [state.theme, state.buttons.length, state.banners.length]
   );
 
-  // Debounced server save (live mode + authed only)
+  // Debounced server save with dirty/saving/saved indicator.
   const saveTimer = useRef(null);
   const setStateAndPersist = (updater) => {
     setState(prev => {
       const next = typeof updater === 'function' ? updater(prev) : updater;
       const clean = SafeState.sanitize(next) || prev;
       if (liveMode && authed) {
+        if (typeof SavedStore !== 'undefined') SavedStore.setStatus('dirty');
         clearTimeout(saveTimer.current);
-        saveTimer.current = setTimeout(() => {
-          api.patchConfig(clean).catch(err => console.warn('save_failed', err.message));
+        saveTimer.current = setTimeout(async () => {
+          if (typeof SavedStore !== 'undefined') SavedStore.setStatus('saving');
+          try {
+            await api.patchConfig(clean);
+            if (typeof SavedStore !== 'undefined') SavedStore.setStatus('saved');
+          } catch (err) {
+            if (typeof SavedStore !== 'undefined') SavedStore.setStatus('error');
+            if (typeof toast !== 'undefined') toast.error('บันทึกไม่สำเร็จ: ' + (err.message || 'unknown'));
+          }
         }, 600);
       }
       return clean;
     });
   };
+
+  // Keep `me` in sync when tokens refresh or role changes
+  const refreshMe = React.useCallback(async () => {
+    try { const m = await api.me(); setMe(m); } catch {}
+  }, []);
 
   // Tweaks panel — only trust messages from the parent frame, and only
   // when we're actually embedded (not running standalone).
@@ -384,6 +408,7 @@ function App() {
             authed={authed}
             me={me}
             onPasswordChanged={() => setMe(m => m ? { ...m, mustChangePassword: false } : m)}
+            onMeRefresh={refreshMe}
             onLogout={async () => { try { await api.logout(); } catch {} setAuthed(false); setMe(null); }}
             onPreview={() => { setShowBoth(false); setView('user'); }}
           />
@@ -457,8 +482,11 @@ function App() {
               return { ...s, buttons: arr };
             });
           }}/>
-        <button onClick={() => {
-            if (!window.confirm('รีเซ็ตข้อมูล demo ทั้งหมด?')) return;
+        <button onClick={async () => {
+            if (typeof toast !== 'undefined') {
+              const ok = await toast.confirm('รีเซ็ตข้อมูล demo ทั้งหมด?', 'รีเซ็ต', 'ยกเลิก', { tone: 'danger' });
+              if (!ok) return;
+            } else if (!window.confirm('รีเซ็ตข้อมูล demo ทั้งหมด?')) return;
             try { localStorage.removeItem('appState_v2'); } catch {}
             setState(DEFAULT_STATE);
           }}
@@ -474,6 +502,7 @@ ReactDOM.createRoot(document.getElementById('root')).render(
   <ErrorBoundary>
     <App />
     {typeof ToastContainer === 'function' && <ToastContainer/>}
+    {typeof OnlineIndicator === 'function' && <OnlineIndicator/>}
   </ErrorBoundary>
 );
 </script>

@@ -5,29 +5,39 @@ import { z } from 'zod';
 export const loginBody = z.object({
   loginId: z.string().min(3).max(64).regex(/^[a-zA-Z0-9._@-]+$/, 'bad_id').transform(s => s.toLowerCase().trim()),
   password: z.string().min(1).max(200),
+  totpCode: z.string().max(10).optional(),
+  backupCode: z.string().max(20).optional(),
+  captchaToken: z.string().max(2048).optional(),
 });
 
 export const createUserBody = z.object({
   loginId: z.string().min(3).max(64).regex(/^[a-zA-Z0-9._@-]+$/, 'bad_id').transform(s => s.toLowerCase().trim()),
   password: z.string().min(12).max(200),
   role: z.enum(['admin', 'editor']).default('editor'),
+  email: z.string().email().max(254).optional().or(z.literal('')),
+  displayName: z.string().max(80).optional().or(z.literal('')),
 });
 
 export const trackBody = z.object({
   buttonId: z.string().min(1).max(64),
   label: z.string().max(80).optional(),
+  variant: z.string().max(8).optional(),
 });
 
-// Config PATCH body — accepts any subset of fields.
 export const configBody = z.object({
   appName: z.string().max(120).optional(),
   tagline: z.string().max(200).optional(),
   theme: z.enum(['cream','sage','midnight','sunset']).optional(),
+  language: z.string().max(8).optional(),
+  darkMode: z.enum(['auto','light','dark']).optional(),
+  featureFlags: z.record(z.union([z.boolean(), z.string(), z.number()])).optional(),
   banners: z.array(z.object({
     id: z.string().max(64).optional(),
     title: z.string().max(120).optional(),
     subtitle: z.string().max(200).optional(),
     tone: z.enum(['leaf','sun','clay','sky','plum']).optional(),
+    imageUrl: z.string().max(512).optional().or(z.literal('')),
+    linkUrl: z.string().max(2048).optional().or(z.literal('')),
   })).max(20).optional(),
   buttons: z.array(z.object({
     id: z.string().max(64).optional(),
@@ -35,13 +45,17 @@ export const configBody = z.object({
     sub: z.string().max(200).optional(),
     icon: z.string().max(32).optional(),
     url: z.string().max(2048).optional(),
+    tags: z.array(z.string().max(32)).max(10).optional(),
+    publishAt: z.string().nullable().optional(),
+    unpublishAt: z.string().nullable().optional(),
+    variant: z.string().max(8).optional(),
   })).max(12).optional(),
   contact: z.object({
     label: z.string().max(120).optional(),
     channel: z.enum(['line','messenger','whatsapp','phone','email']).optional(),
     value: z.string().max(200).optional(),
   }).optional(),
-}).strict();   // reject unknown keys
+}).strict();
 
 export function validate(schema, source = 'body') {
   return (req, res, next) => {

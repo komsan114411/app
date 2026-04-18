@@ -1,12 +1,4 @@
-// seed.js — idempotent bootstrap. Creates first admin with default login
-// and forces password change on first login.
-//
-// Default credentials (FIRST DEPLOY ONLY):
-//   loginId:  admin123
-//   password: admin123
-// These bypass the password policy intentionally. The admin MUST change
-// the password on first login; the system enforces this via the
-// mustChangePassword flag and will not let any other action happen first.
+// seed.js — idempotent bootstrap. Creates first admin + forces password change.
 
 import { env } from './config/env.js';
 import { connectDB, disconnectDB } from './db.js';
@@ -34,13 +26,9 @@ async function main() {
     u.mustChangePassword = true;
     u.failedLoginCount = 0;
     u.lockUntil = null;
-    if (existing) u.tokenVersion = (u.tokenVersion || 0) + 1;   // log out old sessions
+    if (existing) u.tokenVersion = (u.tokenVersion || 0) + 1;
     await u.save();
-    log.info({
-      loginId: u.loginId,
-      created: !existing,
-      defaultPassword: DEFAULT_PASSWORD === 'admin123',
-    }, existing ? 'admin password reset' : 'first admin created');
+    log.info({ loginId: u.loginId, created: !existing }, existing ? 'admin password reset' : 'first admin created');
     log.warn('⚠ Default password is in use. Admin must change on first login.');
   }
 

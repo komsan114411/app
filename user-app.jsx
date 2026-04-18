@@ -1,43 +1,55 @@
-// UserApp.jsx — the home-page the end-user sees (inside iOS frame)
+// UserApp.jsx — home page the end-user sees (inside iOS frame)
 
 function BannerCard({ banner, theme, idx }) {
   const bg = BANNER_TONES[banner.tone] || BANNER_TONES.leaf;
+  const hasImage = !!banner.imageUrl;
+  const clickable = !!banner.linkUrl;
+  const onClick = () => {
+    if (!clickable) return;
+    if (typeof openExternal === 'function') openExternal(banner.linkUrl);
+    else window.open(banner.linkUrl, '_blank', 'noopener,noreferrer');
+  };
   return (
-    <div style={{
-      width: '100%', height: '100%', borderRadius: 24, overflow: 'hidden',
-      position: 'relative', background: bg,
-      boxShadow: '0 10px 30px -12px rgba(0,0,0,0.25)',
+    <div
+      onClick={onClick}
+      style={{
+        width: '100%', height: '100%', borderRadius: 24, overflow: 'hidden',
+        position: 'relative', background: hasImage ? '#000' : bg,
+        boxShadow: '0 10px 30px -12px rgba(0,0,0,0.25)',
+        cursor: clickable ? 'pointer' : 'default',
     }}>
-      {/* subtle grain via dots */}
-      <svg width="100%" height="100%" style={{ position: 'absolute', inset: 0, opacity: 0.14 }}>
-        <defs>
-          <pattern id={`dots-${banner.id}`} x="0" y="0" width="18" height="18" patternUnits="userSpaceOnUse">
-            <circle cx="2" cy="2" r="1" fill="#fff"/>
-          </pattern>
-        </defs>
-        <rect width="100%" height="100%" fill={`url(#dots-${banner.id})`}/>
-      </svg>
-      {/* big decorative circle */}
-      <div style={{
-        position: 'absolute', right: -30, top: -30, width: 160, height: 160,
-        borderRadius: '50%', background: 'rgba(255,255,255,0.18)',
-      }}/>
-      <div style={{
-        position: 'absolute', right: 20, bottom: -50, width: 120, height: 120,
-        borderRadius: '50%', background: 'rgba(255,255,255,0.10)',
-      }}/>
+      {hasImage && (
+        <img src={banner.imageUrl} alt="" style={{
+          position: 'absolute', inset: 0, width: '100%', height: '100%',
+          objectFit: 'cover', opacity: 0.88,
+        }}/>
+      )}
+      {!hasImage && (
+        <svg width="100%" height="100%" style={{ position: 'absolute', inset: 0, opacity: 0.14 }}>
+          <defs>
+            <pattern id={`dots-${banner.id}`} x="0" y="0" width="18" height="18" patternUnits="userSpaceOnUse">
+              <circle cx="2" cy="2" r="1" fill="#fff"/>
+            </pattern>
+          </defs>
+          <rect width="100%" height="100%" fill={`url(#dots-${banner.id})`}/>
+        </svg>
+      )}
+      {!hasImage && <>
+        <div style={{ position: 'absolute', right: -30, top: -30, width: 160, height: 160, borderRadius: '50%', background: 'rgba(255,255,255,0.18)' }}/>
+        <div style={{ position: 'absolute', right: 20, bottom: -50, width: 120, height: 120, borderRadius: '50%', background: 'rgba(255,255,255,0.10)' }}/>
+      </>}
       <div style={{
         position: 'relative', padding: '22px 22px', height: '100%',
         display: 'flex', flexDirection: 'column', justifyContent: 'flex-end',
         color: '#fff',
+        textShadow: hasImage ? '0 1px 6px rgba(0,0,0,0.5)' : 'none',
+        background: hasImage ? 'linear-gradient(180deg, rgba(0,0,0,0.05) 0%, rgba(0,0,0,0.5) 100%)' : 'transparent',
       }}>
         <div style={{
           fontSize: 12, letterSpacing: 1.4, opacity: 0.85, textTransform: 'uppercase',
           fontWeight: 600, marginBottom: 8,
         }}>แบนเนอร์ · {String(idx + 1).padStart(2, '0')}</div>
-        <div style={{ fontSize: 24, fontWeight: 700, lineHeight: 1.15, marginBottom: 4 }}>
-          {banner.title}
-        </div>
+        <div style={{ fontSize: 24, fontWeight: 700, lineHeight: 1.15, marginBottom: 4 }}>{banner.title}</div>
         <div style={{ fontSize: 14, opacity: 0.92 }}>{banner.subtitle}</div>
       </div>
     </div>
@@ -74,10 +86,7 @@ function BannerCarousel({ banners }) {
           <BannerCard banner={b} idx={idx} />
         </div>
       ))}
-      {/* dots */}
-      <div style={{
-        position: 'absolute', bottom: 10, left: 22, display: 'flex', gap: 5, zIndex: 2,
-      }}>
+      <div style={{ position: 'absolute', bottom: 10, left: 22, display: 'flex', gap: 5, zIndex: 2 }}>
         {banners.map((_, idx) => (
           <div key={idx} style={{
             width: idx === i ? 18 : 5, height: 5, borderRadius: 3,
@@ -110,9 +119,7 @@ function QuickTile({ btn, theme, onPress, delayMs }) {
         display: 'flex', flexDirection: 'column', gap: 10, position: 'relative',
         minHeight: 112, fontFamily: 'inherit', color: theme.ink,
       }}>
-      <div style={{
-        display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', width: '100%',
-      }}>
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', width: '100%' }}>
         <div style={{
           width: 38, height: 38, borderRadius: 12, background: theme.accent,
           color: theme.accentInk, display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -120,9 +127,7 @@ function QuickTile({ btn, theme, onPress, delayMs }) {
           <Icon name={btn.icon || 'sparkle'} size={20} stroke={2} />
         </div>
         {hasLink && (
-          <div style={{
-            opacity: 0.35, color: theme.ink, display: 'flex', alignItems: 'center',
-          }}>
+          <div style={{ opacity: 0.35, color: theme.ink, display: 'flex', alignItems: 'center' }}>
             <Icon name="external" size={13} stroke={2}/>
           </div>
         )}
@@ -131,12 +136,17 @@ function QuickTile({ btn, theme, onPress, delayMs }) {
         <div style={{ fontSize: 15, fontWeight: 600, lineHeight: 1.25 }}>{btn.label}</div>
         {btn.sub && <div style={{ fontSize: 12, color: theme.muted, marginTop: 2, lineHeight: 1.3 }}>{btn.sub}</div>}
       </div>
+      {(btn.tags && btn.tags.length > 0) && (
+        <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+          {btn.tags.slice(0, 3).map(t => (
+            <span key={t} style={{ padding: '1px 6px', borderRadius: 4, background: theme.surface, fontSize: 9, color: theme.muted }}>#{t}</span>
+          ))}
+        </div>
+      )}
     </button>
   );
 }
 
-// Build the actual URL to open for a given contact config.
-// Each channel has its own scheme + shape; unsafe values are dropped.
 function contactUrl(contact) {
   if (!contact || typeof contact !== 'object') return '';
   const v = String(contact.value || '').trim();
@@ -155,13 +165,11 @@ function contactUrl(contact) {
       return 'mailto:' + encodeURIComponent(v).replace(/%40/g, '@');
     }
     case 'messenger': {
-      // username or page slug — keep alphanumeric/._-
       const name = v.replace(/[^A-Za-z0-9._-]/g, '').slice(0, 64);
       return name ? 'https://m.me/' + name : '';
     }
     case 'line':
     default: {
-      // @official-id → https://lin.ee/@id ; otherwise treat as LINE ID → line://ti/p/~<id>
       const id = v.replace(/[^A-Za-z0-9._@-]/g, '').slice(0, 64);
       if (!id) return '';
       if (id.startsWith('@')) return 'https://line.me/R/ti/p/' + encodeURIComponent(id);
@@ -180,10 +188,7 @@ function ContactButton({ contact, theme, onPress }) {
     else window.open(url, '_blank', 'noopener,noreferrer');
   };
   return (
-    <button
-      className="ua-contact ua-enter"
-      onClick={handleClick}
-      disabled={!url}
+    <button className="ua-contact ua-enter" onClick={handleClick} disabled={!url}
       style={{
       width: '100%', background: theme.ink, color: theme.surface,
       border: 'none', borderRadius: 22, padding: '18px 20px',
@@ -214,8 +219,19 @@ function ContactButton({ contact, theme, onPress }) {
 }
 
 function UserApp({ state, pageKey, onButtonPress }) {
-  const theme = THEMES[state.theme] || THEMES.cream;
-  const [toast, setToast] = React.useState(null);
+  const baseTheme = THEMES[state.theme] || THEMES.cream;
+  const [query, setQuery] = React.useState('');
+  const [userPrefersDark, setUserPrefersDark] = React.useState(() => {
+    try { return localStorage.getItem('user_dark') === '1'; } catch { return false; }
+  });
+
+  // Resolve dark mode: admin config (auto/light/dark) + user override
+  const systemDark = typeof matchMedia !== 'undefined' && matchMedia('(prefers-color-scheme: dark)').matches;
+  const adminMode = state.darkMode || 'auto';
+  const useDark = userPrefersDark || adminMode === 'dark' || (adminMode === 'auto' && systemDark);
+  const theme = useDark ? THEMES.midnight : baseTheme;
+
+  const [toastMsg, setToast] = React.useState(null);
   const toastTimer = React.useRef(null);
 
   const handlePress = (btn) => {
@@ -234,17 +250,33 @@ function UserApp({ state, pageKey, onButtonPress }) {
     }
   };
 
+  const toggleDark = () => {
+    const next = !userPrefersDark;
+    setUserPrefersDark(next);
+    try { localStorage.setItem('user_dark', next ? '1' : '0'); } catch {}
+  };
+
+  // Filter buttons by search query + tags
+  const filteredButtons = React.useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return state.buttons;
+    return state.buttons.filter(b =>
+      (b.label || '').toLowerCase().includes(q) ||
+      (b.sub || '').toLowerCase().includes(q) ||
+      (b.tags || []).some(t => t.toLowerCase().includes(q))
+    );
+  }, [state.buttons, query]);
+
+  const pageUrl = typeof location !== 'undefined' ? location.origin + location.pathname : '';
+
   return (
     <div key={pageKey} style={{
       minHeight: '100%', background: theme.bg, paddingBottom: 40, position: 'relative',
       fontFamily: '"IBM Plex Sans Thai", -apple-system, system-ui, sans-serif',
       color: theme.ink,
     }}>
-      {/* header */}
       <div className="ua-enter" style={{ padding: '64px 22px 16px', animationDelay: '60ms' }}>
-        <div style={{
-          display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14,
-        }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
           <div style={{
             width: 34, height: 34, borderRadius: 10, background: theme.accent,
             display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -252,67 +284,72 @@ function UserApp({ state, pageKey, onButtonPress }) {
           }}>{state.appName.slice(0, 1)}</div>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontSize: 11, letterSpacing: 0.8, color: theme.muted, textTransform: 'uppercase' }}>
-              สวัสดีตอนเช้า
+              {greetingFor(state.language)}
             </div>
           </div>
-          <div style={{
+          <button onClick={toggleDark} title="เปลี่ยนโหมดมืด/สว่าง" aria-label="toggle dark" style={{
             width: 34, height: 34, borderRadius: '50%', background: theme.surface,
-            border: `1px solid ${theme.border}`,
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            border: `1px solid ${theme.border}`, cursor: 'pointer',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', color: theme.ink, padding: 0,
           }}>
-            <Icon name="chat" size={17} color={theme.ink} stroke={1.7} />
-          </div>
+            <Icon name={useDark ? 'star' : 'sparkle'} size={16} stroke={1.7}/>
+          </button>
+          {typeof QrShareButton === 'function' && pageUrl && <QrShareButton url={pageUrl} theme={theme}/>}
         </div>
-        <div style={{ fontSize: 26, fontWeight: 700, lineHeight: 1.2, letterSpacing: -0.3 }}>
-          {state.appName}
-        </div>
-        {state.tagline && (
-          <div style={{ fontSize: 13, color: theme.muted, marginTop: 4 }}>{state.tagline}</div>
-        )}
+        <div style={{ fontSize: 26, fontWeight: 700, lineHeight: 1.2, letterSpacing: -0.3 }}>{state.appName}</div>
+        {state.tagline && <div style={{ fontSize: 13, color: theme.muted, marginTop: 4 }}>{state.tagline}</div>}
       </div>
 
-      {/* banner */}
       <div className="ua-enter" style={{ padding: '6px 16px 20px', animationDelay: '140ms' }}>
         <BannerCarousel banners={state.banners} />
       </div>
 
-      {/* buttons grid */}
+      {state.buttons.length >= 4 && (
+        <div className="ua-enter" style={{ padding: '0 22px 12px', animationDelay: '180ms' }}>
+          <input
+            type="search"
+            value={query}
+            onChange={e => setQuery(e.target.value.slice(0, 80))}
+            placeholder="ค้นหาปุ่ม..."
+            style={{
+              width: '100%', padding: '9px 14px', borderRadius: 12,
+              border: `1px solid ${theme.border}`, background: theme.surface,
+              color: theme.ink, fontSize: 13, fontFamily: 'inherit',
+              outline: 'none',
+            }}
+          />
+        </div>
+      )}
+
       <div style={{ padding: '0 16px' }}>
         <div style={{
           display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',
           marginBottom: 10, padding: '0 4px',
         }}>
           <div style={{ fontSize: 14, fontWeight: 600 }}>เมนูด่วน</div>
-          <div style={{ fontSize: 12, color: theme.muted }}>{state.buttons.length} รายการ</div>
+          <div style={{ fontSize: 12, color: theme.muted }}>{filteredButtons.length} รายการ</div>
         </div>
-        <div style={{
-          display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10,
-        }}>
-          {state.buttons.map((b, i) => (
-            <QuickTile
-              key={b.id} btn={b} theme={theme}
-              delayMs={220 + i * 55}
-              onPress={handlePress}
-            />
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+          {filteredButtons.map((b, i) => (
+            <QuickTile key={b.id} btn={b} theme={theme} delayMs={220 + i * 55} onPress={handlePress}/>
           ))}
         </div>
+        {filteredButtons.length === 0 && (
+          <div style={{ padding: 20, textAlign: 'center', fontSize: 12, color: theme.muted }}>
+            ไม่พบปุ่มที่ตรงกับคำค้น
+          </div>
+        )}
       </div>
 
-      {/* contact */}
       <div style={{ padding: '22px 16px 8px' }}>
         <ContactButton contact={state.contact} theme={theme} />
       </div>
 
-      {/* footer */}
-      <div className="ua-enter" style={{
-        textAlign: 'center', fontSize: 11, color: theme.muted,
-        padding: '14px 16px', animationDelay: '600ms',
-      }}>
+      <div className="ua-enter" style={{ textAlign: 'center', fontSize: 11, color: theme.muted, padding: '14px 16px', animationDelay: '600ms' }}>
         จัดการโดยแอดมิน · อัปเดตล่าสุด {new Date().toLocaleDateString('th-TH')}
       </div>
 
-      {/* link toast */}
-      {toast && (
+      {toastMsg && (
         <div style={{
           position: 'absolute', left: 16, right: 16, bottom: 40, zIndex: 80,
           background: theme.ink, color: theme.surface,
@@ -323,17 +360,16 @@ function UserApp({ state, pageKey, onButtonPress }) {
         }}>
           <div style={{
             width: 28, height: 28, borderRadius: 8, background: theme.accent,
-            color: theme.accentInk, display: 'flex', alignItems: 'center', justifyContent: 'center',
-            flexShrink: 0,
+            color: theme.accentInk, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
           }}>
-            <Icon name={toast.url ? 'external' : 'x'} size={14} stroke={2.2}/>
+            <Icon name={toastMsg.url ? 'external' : 'x'} size={14} stroke={2.2}/>
           </div>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontSize: 12, opacity: 0.6 }}>
-              {toast.url ? 'กำลังเปิดลิงก์' : 'ปุ่มนี้ยังไม่ได้ตั้งลิงก์'}
+              {toastMsg.url ? 'กำลังเปิดลิงก์' : 'ปุ่มนี้ยังไม่ได้ตั้งลิงก์'}
             </div>
             <div style={{ fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-              {toast.url || toast.label}
+              {toastMsg.url || toastMsg.label}
             </div>
           </div>
         </div>
@@ -342,4 +378,10 @@ function UserApp({ state, pageKey, onButtonPress }) {
   );
 }
 
-window.UserApp = UserApp;
+function greetingFor(lang) {
+  const h = new Date().getHours();
+  if (lang === 'en') return h < 12 ? 'GOOD MORNING' : h < 18 ? 'GOOD AFTERNOON' : 'GOOD EVENING';
+  return h < 12 ? 'สวัสดีตอนเช้า' : h < 18 ? 'สวัสดีตอนบ่าย' : 'สวัสดีตอนเย็น';
+}
+
+Object.assign(window, { UserApp, ContactButton });

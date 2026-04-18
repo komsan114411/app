@@ -1,5 +1,4 @@
-// models/User.js — admin users with argon2id hashing + atomic lockout.
-// argon2 over bcrypt: memory-hard (GPU/ASIC-resistant), no event-loop block.
+// models/User.js — admin users with argon2id + atomic lockout + 2FA (TOTP).
 
 import mongoose from 'mongoose';
 import { hash as argonHash, verify as argonVerify, Algorithm } from '@node-rs/argon2';
@@ -16,25 +15,24 @@ const argonOpts = {
   parallelism: env.ARGON2_PARALLEL,
 };
 
-// A fixed, well-formed dummy hash. verify() against it takes ~same time as a
-// real verify → prevents timing-based user enumeration for "no such user".
-// Generated once and embedded; doesn't match any real password.
 const DUMMY_HASH =
   '$argon2id$v=19$m=65536,t=3,p=1$' +
   'ZHVtbXlzYWx0ZHVtbXlzYWx0ZHVtbXk$' +
   'ZHVtbXlkdW1teWR1bW15ZHVtbXlkdW1teWR1bW15ZHVtbXlkdW1teWR1bQ';
 
 const UserSchema = new mongoose.Schema({
-  // loginId — username-style login (alphanumeric + ._-), not strict email.
-  // Legacy installs migrated via `email → loginId` rename.
   loginId:      { type: String, required: true, unique: true, lowercase: true, trim: true, minlength: 3, maxlength: 64, index: true, match: /^[a-z0-9._@-]+$/ },
+  displayName:  { type: String, default: '', maxlength: 80, trim: true },
+  email:        { type: String, default: '', lowercase: true, trim: true, maxlength: 254 }, // used for password reset (optional)
   passwordHash: { type: String, required: true, select: false },
   role:         { type: String, enum: ['admin', 'editor'], default: 'admin' },
   tokenVersion: { type: Number, default: 0 },
-
-  // When true, the user is forced to change password on next login before
-  // any other action is allowed. Seed-created admins start with this = true.
   mustChangePassword: { type: Boolean, default: false },
+
+  // 2FA (TOTP)
+  totpSecret:       { type: String, default: '', select: false },
+  totpEnabled:      { type: Boolean, default: false },
+  totpBackupCodes:  { type: [String], default: [], select: false },
 
   failedLoginCount: { type: Number, default: 0, select: false },
   lockUntil:        { type: Date,   default: null, select: false },
@@ -47,7 +45,7 @@ const UserSchema = new mongoose.Schema({
 }, { timestamps: true });
 
 UserSchema.methods.setPassword = async function (plain, userInputs = []) {
-  const check = await validatePasswordStrength(plain, [this.loginId, ...userInputs].filter(Boolean));
+  const check = await validatePasswordStrength(plain, [this.loginId, this.email, ...userInputs].filter(Boolean));
   if (!check.ok) {
     const err = new Error('weak_password');
     err.reason = check.reason;
@@ -58,7 +56,6 @@ UserSchema.methods.setPassword = async function (plain, userInputs = []) {
   this.mustChangePassword = false;
 };
 
-// Skip policy check — for seed only. NEVER expose via HTTP.
 UserSchema.methods.setPasswordUnsafe = async function (plain) {
   this.passwordHash = await argonHash(plain, argonOpts);
 };
@@ -77,15 +74,11 @@ UserSchema.methods.invalidateAllSessions = async function () {
   return User.findOneAndUpdate({ _id: this._id }, { $inc: { tokenVersion: 1 } });
 };
 
-// ── Static timing-safe "verify against dummy to burn cycles" ──────
-// Used when user lookup returned null, so response time matches a real verify.
 UserSchema.statics.verifyDummy = async function (plain) {
   try { await argonVerify(DUMMY_HASH, typeof plain === 'string' ? plain : ''); } catch {}
   return false;
 };
 
-// ── Static atomic lockout increment ──────────────────────────────
-// One round-trip. If (count+1) reaches MAX_FAILED → lock for LOCK_MS.
 UserSchema.statics.atomicRecordFail = async function (userId) {
   const now = new Date();
   const lockAt = new Date(now.getTime() + LOCK_MS);

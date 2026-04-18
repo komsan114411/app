@@ -1,6 +1,4 @@
 // models/AppConfig.js — singleton doc holding the public-facing app state.
-// Uses optimistic concurrency (__v) so two admins saving simultaneously
-// don't silently clobber each other's edits.
 
 import mongoose from 'mongoose';
 
@@ -10,6 +8,13 @@ const ButtonSchema = new mongoose.Schema({
   sub:   { type: String, default: '', maxlength: 200 },
   icon:  { type: String, default: 'sparkle', maxlength: 32 },
   url:   { type: String, default: '', maxlength: 2048 },
+  // Optional: tags for grouping/search in the user page
+  tags:  { type: [String], default: [], validate: v => !v || v.length <= 10 },
+  // Scheduled publish window (null = always visible)
+  publishAt:   { type: Date, default: null },
+  unpublishAt: { type: Date, default: null },
+  // Simple A/B variant (only 'a' or 'b' are matched; undefined = no test)
+  variant:     { type: String, default: '', maxlength: 8 },
 }, { _id: false });
 
 const BannerSchema = new mongoose.Schema({
@@ -17,6 +22,8 @@ const BannerSchema = new mongoose.Schema({
   title:    { type: String, default: '', maxlength: 120 },
   subtitle: { type: String, default: '', maxlength: 200 },
   tone:     { type: String, default: 'leaf', maxlength: 32 },
+  imageUrl: { type: String, default: '', maxlength: 512 },   // upload URL (served from /uploads)
+  linkUrl:  { type: String, default: '', maxlength: 2048 },  // optional click destination
 }, { _id: false });
 
 const ContactSchema = new mongoose.Schema({
@@ -26,7 +33,6 @@ const ContactSchema = new mongoose.Schema({
 }, { _id: false });
 
 const AppConfigSchema = new mongoose.Schema({
-  // Fixed _id so there's always exactly one document.
   _id:     { type: String, default: 'singleton' },
   appName: { type: String, default: 'แอปของฉัน', maxlength: 120 },
   tagline: { type: String, default: '', maxlength: 200 },
@@ -35,14 +41,30 @@ const AppConfigSchema = new mongoose.Schema({
   buttons: { type: [ButtonSchema], default: [] },
   contact: { type: ContactSchema, default: () => ({}) },
 
+  // i18n + user-side customisation
+  language: { type: String, default: 'th', maxlength: 8 },
+  darkMode: { type: String, enum: ['auto', 'light', 'dark'], default: 'auto' },
+
+  // Feature flags — frontend reads these to toggle UI paths
+  featureFlags: { type: mongoose.Schema.Types.Mixed, default: {} },
+
   updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
 }, { timestamps: true, optimisticConcurrency: true });
 
 export const AppConfig = mongoose.model('AppConfig', AppConfigSchema);
 
-// Helper: get-or-create singleton.
 export async function getAppConfig() {
   let doc = await AppConfig.findById('singleton');
   if (!doc) doc = await AppConfig.create({ _id: 'singleton' });
   return doc;
+}
+
+// Return buttons filtered by publish window (date window only; variant handled client-side)
+export function publishedButtons(buttons) {
+  const now = Date.now();
+  return (buttons || []).filter(b => {
+    if (b.publishAt && new Date(b.publishAt).getTime() > now) return false;
+    if (b.unpublishAt && new Date(b.unpublishAt).getTime() <= now) return false;
+    return true;
+  });
 }

@@ -45,3 +45,12 @@ compose-down: ## Docker compose down
 
 clean: ## Remove build artifacts + node_modules
 	rm -rf backend/node_modules backend/coverage backend/.vite
+
+sbom: ## Generate a CycloneDX SBOM for the backend
+	cd backend && npm run sbom
+
+vapid: ## Generate VAPID keys for web-push (copy to Railway env)
+	cd backend && node -e "const w=require('web-push').generateVAPIDKeys(); console.log('PUSH_VAPID_PUBLIC='+w.publicKey+'\\nPUSH_VAPID_PRIVATE='+w.privateKey)"
+
+backup: ## Run nightly MongoDB backup script
+	bash ops/backup.sh
