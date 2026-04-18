@@ -25,28 +25,41 @@ const DUMMY_HASH =
   'ZHVtbXlkdW1teWR1bW15ZHVtbXlkdW1teWR1bW15ZHVtbXlkdW1teWR1bQ';
 
 const UserSchema = new mongoose.Schema({
-  email:        { type: String, required: true, unique: true, lowercase: true, trim: true, maxlength: 254, index: true },
+  // loginId — username-style login (alphanumeric + ._-), not strict email.
+  // Legacy installs migrated via `email → loginId` rename.
+  loginId:      { type: String, required: true, unique: true, lowercase: true, trim: true, minlength: 3, maxlength: 64, index: true, match: /^[a-z0-9._@-]+$/ },
   passwordHash: { type: String, required: true, select: false },
   role:         { type: String, enum: ['admin', 'editor'], default: 'admin' },
   tokenVersion: { type: Number, default: 0 },
+
+  // When true, the user is forced to change password on next login before
+  // any other action is allowed. Seed-created admins start with this = true.
+  mustChangePassword: { type: Boolean, default: false },
 
   failedLoginCount: { type: Number, default: 0, select: false },
   lockUntil:        { type: Date,   default: null, select: false },
   lastLoginAt:      { type: Date,   default: null },
   lastLoginIp:      { type: String, default: '', maxlength: 64 },
 
+  createdBy:    { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
   disabledAt:   { type: Date, default: null },
   disabledBy:   { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
 }, { timestamps: true });
 
 UserSchema.methods.setPassword = async function (plain, userInputs = []) {
-  const check = await validatePasswordStrength(plain, [this.email, ...userInputs].filter(Boolean));
+  const check = await validatePasswordStrength(plain, [this.loginId, ...userInputs].filter(Boolean));
   if (!check.ok) {
     const err = new Error('weak_password');
     err.reason = check.reason;
     err.details = check;
     throw err;
   }
+  this.passwordHash = await argonHash(plain, argonOpts);
+  this.mustChangePassword = false;
+};
+
+// Skip policy check — for seed only. NEVER expose via HTTP.
+UserSchema.methods.setPasswordUnsafe = async function (plain) {
   this.passwordHash = await argonHash(plain, argonOpts);
 };
 

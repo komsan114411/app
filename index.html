@@ -170,10 +170,7 @@ function App() {
     (async () => {
       try {
         const boot = await loadInitialState();
-        // Live mode: server is the source of truth. Wipe stale demo state.
-        if (boot.live) {
-          try { localStorage.removeItem('appState_v2'); } catch {}
-        }
+        if (boot.live) { try { localStorage.removeItem('appState_v2'); } catch {} }
         setState(boot.state);
         setLiveMode(boot.live);
         setAuthed(boot.authed || false);
@@ -182,6 +179,34 @@ function App() {
       }
     })();
   }, []);
+
+  // ── Real-time user page: poll public config while tab is visible ──
+  // Admin edits reflect within ~5-8s for anyone viewing the user page.
+  // Stops when the tab is backgrounded to save battery.
+  useEffect(() => {
+    if (!liveMode) return;
+    let cancelled = false;
+    let lastVersion = '';
+
+    const tick = async () => {
+      if (cancelled || document.hidden) return;
+      try {
+        const cfg = await api.getConfig();
+        const version = cfg.updatedAt ? String(cfg.updatedAt) : '';
+        if (version && version === lastVersion) return;
+        lastVersion = version;
+        setState(prev => {
+          const clean = SafeState.sanitize({ ...prev, ...cfg });
+          return clean || prev;
+        });
+      } catch {}
+    };
+
+    const id = setInterval(tick, 5000);
+    const onVis = () => { if (!document.hidden) tick(); };
+    document.addEventListener('visibilitychange', onVis);
+    return () => { cancelled = true; clearInterval(id); document.removeEventListener('visibilitychange', onVis); };
+  }, [liveMode]);
 
   // In demo mode, restore previous session from localStorage.
   useEffect(() => {
@@ -308,6 +333,7 @@ function App() {
             liveMode={liveMode}
             authed={authed}
             me={me}
+            onPasswordChanged={() => setMe(m => m ? { ...m, mustChangePassword: false } : m)}
             onLogout={async () => { try { await api.logout(); } catch {} setAuthed(false); setMe(null); }}
             onPreview={() => { setShowBoth(false); setView('user'); }}
           />

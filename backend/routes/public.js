@@ -11,11 +11,14 @@ export const publicRouter = Router();
 
 // GET /api/config — public-safe subset of AppConfig.
 // In-memory cache (30s) to absorb traffic spikes.
-let cache = { at: 0, payload: null };
+// Cache is intentionally short (3s) to keep user page in near-real-time
+// with admin edits. Admin PATCH invalidates the cache immediately.
+let cache = { at: 0, payload: null, version: 0 };
 publicRouter.get('/config', publicReadLimiter, async (req, res) => {
   const now = Date.now();
-  if (cache.payload && now - cache.at < 30_000) {
-    res.set('Cache-Control', 'public, max-age=15, stale-while-revalidate=60');
+  if (cache.payload && now - cache.at < 3_000) {
+    res.set('Cache-Control', 'public, max-age=3, stale-while-revalidate=10');
+    res.set('X-Config-Version', String(cache.version));
     return res.json(cache.payload);
   }
   const cfg = await getAppConfig();
@@ -26,9 +29,11 @@ publicRouter.get('/config', publicReadLimiter, async (req, res) => {
     banners: cfg.banners,
     buttons: cfg.buttons,
     contact: cfg.contact,
+    updatedAt: cfg.updatedAt,
   };
-  cache = { at: now, payload };
-  res.set('Cache-Control', 'public, max-age=15, stale-while-revalidate=60');
+  cache = { at: now, payload, version: cfg.updatedAt ? new Date(cfg.updatedAt).getTime() : now };
+  res.set('Cache-Control', 'public, max-age=3, stale-while-revalidate=10');
+  res.set('X-Config-Version', String(cache.version));
   res.json(payload);
 });
 

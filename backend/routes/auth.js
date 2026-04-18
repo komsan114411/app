@@ -29,20 +29,18 @@ const refreshCookieOpts = () => ({
 const GENERIC_LOGIN_FAIL = { error: 'invalid_credentials' };
 
 authRouter.post('/login', loginBurstLimiter, loginLimiter, validate(loginBody), async (req, res) => {
-  const { email, password } = req.body;
+  const { loginId, password } = req.body;
   const ipHash = hashIp(req.ip);
   const ua = safeText(req.get('user-agent') || '', 200);
 
-  const user = await User.findOne({ email }).select('+passwordHash +failedLoginCount +lockUntil');
+  const user = await User.findOne({ loginId }).select('+passwordHash +failedLoginCount +lockUntil');
 
-  // Branch A: user not found → verify against dummy hash (same time), return generic.
   if (!user) {
     await User.verifyDummy(password);
-    await AuditLog.create({ actorEmail: email, action: 'login_unknown', outcome: 'failure', ipHash, userAgent: ua });
+    await AuditLog.create({ actorEmail: loginId, action: 'login_unknown', outcome: 'failure', ipHash, userAgent: ua });
     return res.status(401).json(GENERIC_LOGIN_FAIL);
   }
 
-  // Branch B: user disabled or locked → still run verify to equalize timing.
   const inactive = !!user.disabledAt;
   const locked = user.isLocked();
   const ok = await user.verifyPassword(password);
@@ -51,7 +49,7 @@ authRouter.post('/login', loginBurstLimiter, loginLimiter, validate(loginBody), 
     if (!inactive && !locked && !ok) await User.atomicRecordFail(user._id);
     await AuditLog.create({
       actorId: user._id,
-      actorEmail: user.email,
+      actorEmail: user.loginId,
       action: inactive ? 'login_disabled' : locked ? 'login_locked' : 'login_fail',
       outcome: 'failure',
       ipHash, userAgent: ua,
@@ -59,18 +57,22 @@ authRouter.post('/login', loginBurstLimiter, loginLimiter, validate(loginBody), 
     return res.status(401).json(GENERIC_LOGIN_FAIL);
   }
 
-  // Success path
   const fresh = await User.atomicRecordSuccess(user._id, req.ip, /*bumpTokenVersion*/ false);
   const accessToken = signAccess(fresh);
   const { token: refresh } = await issueRefresh(fresh, { ip: req.ip, userAgent: ua });
 
   res.cookie(REFRESH_COOKIE, refresh, refreshCookieOpts());
   rotateCsrfCookie(res);
-  await AuditLog.create({ actorId: user._id, actorEmail: user.email, action: 'login_success', ipHash, userAgent: ua });
+  await AuditLog.create({ actorId: user._id, actorEmail: user.loginId, action: 'login_success', ipHash, userAgent: ua });
 
   res.json({
     accessToken,
-    user: { id: String(user._id), email: user.email, role: user.role },
+    user: {
+      id: String(user._id),
+      loginId: user.loginId,
+      role: user.role,
+      mustChangePassword: !!user.mustChangePassword,
+    },
   });
 });
 

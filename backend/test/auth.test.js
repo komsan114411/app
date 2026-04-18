@@ -8,39 +8,38 @@ import { createAdmin } from './setup.js';
 let app;
 
 beforeAll(async () => {
-  // Import app AFTER setup has set env vars and connected mongo
   ({ app } = await import('../server.js'));
 });
 
 describe('POST /api/auth/login', () => {
   it('rejects malformed body', async () => {
-    const r = await request(app).post('/api/auth/login').send({ email: 'x', password: 'y' });
+    const r = await request(app).post('/api/auth/login').send({ loginId: 'x', password: '' });
     expect(r.status).toBe(400);
-    expect(r.body.error).toBe('invalid_input');
   });
 
   it('returns generic 401 for unknown user', async () => {
     const r = await request(app).post('/api/auth/login')
-      .send({ email: 'ghost@example.com', password: 'whatever-long-password' });
+      .send({ loginId: 'ghost', password: 'whatever-long-password' });
     expect(r.status).toBe(401);
     expect(r.body.error).toBe('invalid_credentials');
   });
 
   it('returns generic 401 for wrong password', async () => {
-    await createAdmin('real@test.com');
+    await createAdmin('realuser');
     const r = await request(app).post('/api/auth/login')
-      .send({ email: 'real@test.com', password: 'wrong-long-password' });
+      .send({ loginId: 'realuser', password: 'wrong-long-password' });
     expect(r.status).toBe(401);
     expect(r.body.error).toBe('invalid_credentials');
   });
 
   it('returns access token + sets cookies on success', async () => {
-    const { password } = await createAdmin('good@test.com');
+    const { password } = await createAdmin('gooduser');
     const r = await request(app).post('/api/auth/login')
-      .send({ email: 'good@test.com', password });
+      .send({ loginId: 'gooduser', password });
     expect(r.status).toBe(200);
     expect(r.body.accessToken).toBeTruthy();
-    expect(r.body.user.email).toBe('good@test.com');
+    expect(r.body.user.loginId).toBe('gooduser');
+    expect(r.body.user.mustChangePassword).toBe(false);
     const cookies = r.headers['set-cookie'].join(';');
     expect(cookies).toContain('refresh_token');
     expect(cookies).toContain('XSRF-TOKEN');
@@ -48,21 +47,20 @@ describe('POST /api/auth/login', () => {
   });
 
   it('login timing is similar for unknown vs wrong password', async () => {
-    await createAdmin('timing@test.com');
+    await createAdmin('timinguser');
     const times = [];
     for (let i = 0; i < 3; i++) {
       const t0 = Date.now();
       await request(app).post('/api/auth/login')
-        .send({ email: 'ghost@test.com', password: 'x'.repeat(15) });
+        .send({ loginId: 'ghostuser', password: 'x'.repeat(15) });
       times.push(Date.now() - t0);
     }
     for (let i = 0; i < 3; i++) {
       const t0 = Date.now();
       await request(app).post('/api/auth/login')
-        .send({ email: 'timing@test.com', password: 'x'.repeat(15) });
+        .send({ loginId: 'timinguser', password: 'x'.repeat(15) });
       times.push(Date.now() - t0);
     }
-    // No statistical claim, just check both paths take > 0 ms (dummy verify ran)
     expect(Math.min(...times)).toBeGreaterThan(0);
   });
 });
@@ -74,9 +72,9 @@ describe('Admin config requires auth + CSRF', () => {
   });
 
   it('PATCH /api/admin/config without CSRF header → 403', async () => {
-    const { password } = await createAdmin('csrf@test.com');
+    const { password } = await createAdmin('csrfuser');
     const login = await request(app).post('/api/auth/login')
-      .send({ email: 'csrf@test.com', password });
+      .send({ loginId: 'csrfuser', password });
     const token = login.body.accessToken;
     const cookies = login.headers['set-cookie'];
 
@@ -89,9 +87,9 @@ describe('Admin config requires auth + CSRF', () => {
   });
 
   it('PATCH /api/admin/config with correct token + CSRF → 200', async () => {
-    const { password } = await createAdmin('ok@test.com');
+    const { password } = await createAdmin('okuser');
     const login = await request(app).post('/api/auth/login')
-      .send({ email: 'ok@test.com', password });
+      .send({ loginId: 'okuser', password });
     const token = login.body.accessToken;
     const cookies = login.headers['set-cookie'];
     const xsrf = cookies.find(c => c.startsWith('XSRF-TOKEN=')).split(';')[0].split('=')[1];

@@ -59,7 +59,7 @@ adminRouter.patch('/config', adminWriteLimiter, requireRole('admin', 'editor'), 
   invalidateConfigCache();
   await AuditLog.create({
     actorId: req.user.id,
-    actorEmail: req.user.email,
+    actorEmail: req.user.loginId,
     action: 'config_update',
     target: 'AppConfig:singleton',
     ipHash: hashIp(req.ip),
@@ -132,10 +132,41 @@ adminRouter.get('/audit', requireRole('admin'), async (req, res) => {
 // ── User management ────────────────────────────────────────
 adminRouter.get('/users', requireRole('admin'), async (req, res) => {
   const users = await User.find({}, {
-    email: 1, role: 1, lastLoginAt: 1, lastLoginIp: 1,
-    disabledAt: 1, createdAt: 1, tokenVersion: 1,
+    loginId: 1, role: 1, lastLoginAt: 1, lastLoginIp: 1,
+    disabledAt: 1, createdAt: 1, tokenVersion: 1, mustChangePassword: 1,
   }).sort({ createdAt: 1 }).limit(200).lean();
   res.json({ rows: users.map(u => ({ ...u, _id: String(u._id) })) });
+});
+
+// Create a new admin/editor — admin role only.
+adminRouter.post('/users', adminWriteLimiter, requireRole('admin'), async (req, res) => {
+  const { createUserBody } = await import('../middleware/validate.js');
+  const parsed = createUserBody.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: 'invalid_input', issues: parsed.error.issues });
+  const { loginId, password, role } = parsed.data;
+
+  const existing = await User.findOne({ loginId });
+  if (existing) return res.status(409).json({ error: 'login_id_taken' });
+
+  const u = new User({ loginId, role, createdBy: req.user.id });
+  try { await u.setPassword(password, [loginId]); }
+  catch (e) {
+    return res.status(400).json({
+      error: e.reason || 'weak_password',
+      suggestions: (e.details && e.details.suggestions) || [],
+    });
+  }
+  await u.save();
+  await AuditLog.create({
+    actorId: req.user.id,
+    actorEmail: req.user.loginId,
+    action: 'user_create',
+    target: 'User:' + String(u._id),
+    ipHash: hashIp(req.ip),
+    userAgent: safeText(req.get('user-agent') || '', 200),
+    diff: { created: { loginId, role } },
+  });
+  res.json({ ok: true, user: { id: String(u._id), loginId: u.loginId, role: u.role } });
 });
 
 const userIdParam = z.object({ id: z.string().regex(/^[0-9a-f]{24}$/i, 'invalid_id') });
@@ -156,7 +187,7 @@ adminRouter.post('/users/:id/disable', requireRole('admin'), async (req, res) =>
 
   await AuditLog.create({
     actorId: req.user.id,
-    actorEmail: req.user.email,
+    actorEmail: req.user.loginId,
     action: 'user_disable',
     target: 'User:' + String(target._id),
     ipHash: hashIp(req.ip),
@@ -175,7 +206,7 @@ adminRouter.post('/users/:id/enable', requireRole('admin'), async (req, res) => 
   await target.save();
   await AuditLog.create({
     actorId: req.user.id,
-    actorEmail: req.user.email,
+    actorEmail: req.user.loginId,
     action: 'user_enable',
     target: 'User:' + String(target._id),
     ipHash: hashIp(req.ip),
@@ -198,7 +229,7 @@ adminRouter.post('/users/:id/revoke-sessions', requireRole('admin'), async (req,
 
   await AuditLog.create({
     actorId: req.user.id,
-    actorEmail: req.user.email,
+    actorEmail: req.user.loginId,
     action: 'sessions_revoke',
     target: 'User:' + String(target._id),
     ipHash: hashIp(req.ip),
@@ -220,7 +251,7 @@ adminRouter.post('/me/password', adminWriteLimiter, validate(pwChangeBody), asyn
   const ok = await me.verifyPassword(req.body.currentPassword);
   if (!ok) {
     await AuditLog.create({
-      actorId: me._id, actorEmail: me.email,
+      actorId: me._id, actorEmail: me.loginId,
       action: 'password_change_fail', outcome: 'failure',
       ipHash: hashIp(req.ip), userAgent: safeText(req.get('user-agent') || '', 200),
     });
@@ -228,19 +259,20 @@ adminRouter.post('/me/password', adminWriteLimiter, validate(pwChangeBody), asyn
   }
 
   try {
-    await me.setPassword(req.body.newPassword, [me.email]);
+    await me.setPassword(req.body.newPassword, [me.loginId]);
   } catch (e) {
     return res.status(400).json({
       error: e.reason || 'weak_password',
       suggestions: (e.details && e.details.suggestions) || [],
     });
   }
+  me.mustChangePassword = false;
   await me.save();
   await revokeAllForUser(me._id, 'password_changed');
   await User.findOneAndUpdate({ _id: me._id }, { $inc: { tokenVersion: 1 } });
 
   await AuditLog.create({
-    actorId: me._id, actorEmail: me.email,
+    actorId: me._id, actorEmail: me.loginId,
     action: 'password_change', outcome: 'success',
     ipHash: hashIp(req.ip), userAgent: safeText(req.get('user-agent') || '', 200),
   });

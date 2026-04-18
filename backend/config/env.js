@@ -26,8 +26,9 @@ const schema = z.object({
   IP_SALT:         z.string().min(16, 'IP_SALT must be at least 16 chars'),
   TRUST_PROXY:     z.coerce.number().int().min(0).max(10).default(1),
 
-  ADMIN_EMAIL:     z.string().email().optional(),
-  ADMIN_PASSWORD:  z.string().min(10).optional(),
+  // Seed defaults — if unset, seed uses loginId=admin123 password=admin123
+  ADMIN_LOGIN_ID:  z.string().min(3).max(64).optional(),
+  ADMIN_PASSWORD:  z.string().min(1).max(200).optional(),
 });
 
 const parsed = schema.safeParse(process.env);

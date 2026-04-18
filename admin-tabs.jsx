@@ -28,7 +28,7 @@ function Pill({ children, tone = 'default' }) {
 }
 
 // ─── Security tab: change own password ──────────────────────
-function SecurityTab({ onLogout }) {
+function SecurityTab({ onLogout, mustChange = false, onPasswordChanged }) {
   const [current, setCurrent] = React.useState('');
   const [next, setNext] = React.useState('');
   const [confirm, setConfirm] = React.useState('');
@@ -56,8 +56,14 @@ function SecurityTab({ onLogout }) {
     setBusy(true);
     try {
       await api.changePassword(current, next);
-      setMsg({ kind: 'success', text: 'เปลี่ยนรหัสผ่านสำเร็จ — ระบบจะออกจากระบบเพื่อความปลอดภัย' });
-      setTimeout(() => onLogout?.(), 1600);
+      if (mustChange) {
+        setMsg({ kind: 'success', text: 'ตั้งรหัสใหม่สำเร็จ — กรุณาเข้าสู่ระบบอีกครั้งด้วยรหัสใหม่' });
+        setTimeout(() => onLogout?.(), 1400);
+      } else {
+        setMsg({ kind: 'success', text: 'เปลี่ยนรหัสผ่านสำเร็จ — ระบบจะออกจากระบบเพื่อความปลอดภัย' });
+        setTimeout(() => onLogout?.(), 1600);
+      }
+      onPasswordChanged?.();
     } catch (err) {
       const code = err.message || 'fail';
       setMsg({ kind: 'error', text: friendlyPasswordError(code) });
@@ -69,7 +75,21 @@ function SecurityTab({ onLogout }) {
 
   return (
     <div>
-      <SectionHead title="ความปลอดภัย" sub="เปลี่ยนรหัสผ่านของตนเอง · ระบบจะออกจากระบบทุกอุปกรณ์หลังเปลี่ยน"/>
+      <SectionHead
+        title={mustChange ? 'ตั้งรหัสผ่านใหม่ (ครั้งแรก)' : 'ความปลอดภัย'}
+        sub={mustChange
+          ? 'คุณใช้รหัสตั้งต้น กรุณาเปลี่ยนก่อนเข้าใช้งานส่วนอื่น'
+          : 'เปลี่ยนรหัสผ่านของตนเอง · ระบบจะออกจากระบบทุกอุปกรณ์หลังเปลี่ยน'}/>
+      {mustChange && (
+        <div style={{
+          margin: '0 0 16px', padding: '10px 14px', borderRadius: 10,
+          background: 'rgba(210,150,40,0.1)', border: '1px solid rgba(210,150,40,0.3)',
+          color: '#7A5A10', fontSize: 12, display: 'flex', alignItems: 'center', gap: 8,
+        }}>
+          <Icon name="settings" size={14} stroke={2}/>
+          บัญชีใหม่ต้องตั้งรหัสใหม่ก่อน tab อื่นจะเข้าถึงได้
+        </div>
+      )}
       <div style={{ display: 'grid', gridTemplateColumns: '1.3fr 1fr', gap: 16 }}>
         <Card>
           <form onSubmit={submit} autoComplete="off">
@@ -151,11 +171,12 @@ function friendlyPasswordError(code) {
   }
 }
 
-// ─── Users tab: list + disable/enable/revoke ────────────────
+// ─── Users tab: list + disable/enable/revoke + add new ──────
 function UsersTab({ currentUserId }) {
   const [rows, setRows] = React.useState([]);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState(null);
+  const [showAdd, setShowAdd] = React.useState(false);
 
   const load = React.useCallback(async () => {
     setLoading(true); setError(null);
@@ -178,8 +199,18 @@ function UsersTab({ currentUserId }) {
 
   return (
     <div>
-      <SectionHead title="ผู้ดูแลระบบ" sub={`${rows.length} บัญชี · เฉพาะ role admin เท่านั้นที่เห็นหน้านี้`}
-        right={<button onClick={load} style={refreshBtn}><Icon name="sparkle" size={13} stroke={1.8}/> รีเฟรช</button>}/>
+      <SectionHead title="ผู้ดูแลระบบ" sub={`${rows.length} บัญชี · เฉพาะ role admin เห็นหน้านี้`}
+        right={
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button onClick={() => setShowAdd(true)} style={{
+              display: 'flex', alignItems: 'center', gap: 6, padding: '7px 14px',
+              borderRadius: 8, border: 'none', background: '#1F1B17', color: '#fff',
+              fontFamily: 'inherit', fontSize: 12, fontWeight: 600, cursor: 'pointer',
+            }}><Icon name="plus" size={13} stroke={2.2}/> เพิ่มแอดมิน</button>
+            <button onClick={load} style={refreshBtn}><Icon name="sparkle" size={13} stroke={1.8}/> รีเฟรช</button>
+          </div>
+        }/>
+      {showAdd && <AddAdminDialog onClose={() => setShowAdd(false)} onCreated={() => { setShowAdd(false); load(); }}/>}
       {loading && <div style={dim}>กำลังโหลด…</div>}
       {error && <div style={errBox}>โหลดไม่สำเร็จ ({error})</div>}
       {!loading && !error && rows.length === 0 && <div style={dim}>ยังไม่มีบัญชี</div>}
@@ -193,13 +224,14 @@ function UsersTab({ currentUserId }) {
                 <div style={{
                   width: 40, height: 40, borderRadius: 11, background: '#1F1B17', color: '#fff',
                   display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: 15,
-                }}>{(u.email || '?').slice(0,1).toUpperCase()}</div>
+                }}>{(u.loginId || '?').slice(0,1).toUpperCase()}</div>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 14, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 8 }}>
-                    {u.email}
+                  <div style={{ fontSize: 14, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                    {u.loginId}
                     {isSelf && <Pill>คุณ</Pill>}
                     <Pill tone={u.role === 'admin' ? 'default' : 'warn'}>{u.role}</Pill>
-                    {disabled ? <Pill tone="danger">ปิดการใช้งาน</Pill> : <Pill tone="success">ใช้งาน</Pill>}
+                    {disabled ? <Pill tone="danger">ปิดใช้งาน</Pill> : <Pill tone="success">ใช้งาน</Pill>}
+                    {u.mustChangePassword && <Pill tone="warn">ต้องตั้งรหัสใหม่</Pill>}
                   </div>
                   <div style={{ fontSize: 11, color: '#8F877C', marginTop: 3 }}>
                     เข้าสู่ระบบล่าสุด: {fmtTime(u.lastLoginAt)}
@@ -228,6 +260,98 @@ function confirmText(action) {
          'ยืนยัน?';
 }
 
+// ─── Add-admin modal dialog ─────────────────────────────────
+function AddAdminDialog({ onClose, onCreated }) {
+  const [loginId, setLoginId] = React.useState('');
+  const [password, setPassword] = React.useState('');
+  const [role, setRole] = React.useState('editor');
+  const [busy, setBusy] = React.useState(false);
+  const [err, setErr] = React.useState(null);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    setErr(null);
+    if (!/^[a-zA-Z0-9._@-]{3,64}$/.test(loginId)) { setErr('Login ID 3-64 ตัว a-z 0-9 . _ - @'); return; }
+    if (password.length < 12) { setErr('รหัสอย่างน้อย 12 ตัว + ต้องผ่านนโยบาย'); return; }
+    setBusy(true);
+    try {
+      await api.createUser({ loginId: loginId.toLowerCase(), password, role });
+      onCreated?.();
+    } catch (e) {
+      setErr(friendlyCreateError(e.message));
+    } finally {
+      setBusy(false);
+      setPassword('');
+    }
+  };
+
+  return (
+    <div onClick={e => e.target === e.currentTarget && onClose?.()} style={{
+      position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', zIndex: 900,
+      display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20,
+    }}>
+      <form onSubmit={submit} autoComplete="off" style={{
+        width: 400, background: '#fff', borderRadius: 14, padding: 22,
+        boxShadow: '0 40px 80px -20px rgba(0,0,0,0.4)',
+      }}>
+        <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 6 }}>เพิ่มผู้ดูแลใหม่</div>
+        <div style={{ fontSize: 11, color: '#6B6458', marginBottom: 18 }}>
+          ผู้ใช้ใหม่สามารถล็อกอินด้วย Login ID + รหัสที่ตั้งได้ทันที
+        </div>
+
+        <Field label="Login ID">
+          <input type="text" value={loginId} onChange={e => setLoginId(e.target.value.slice(0, 64))}
+            required autoCapitalize="off" spellCheck={false} placeholder="editor1"
+            style={pwInput}/>
+        </Field>
+        <Field label="รหัสผ่าน (อย่างน้อย 12 ตัว, ผ่านนโยบาย)">
+          <input type="password" value={password} onChange={e => setPassword(e.target.value.slice(0, 200))}
+            required minLength={12} maxLength={200} style={pwInput}/>
+        </Field>
+        <Field label="สิทธิ์">
+          <select value={role} onChange={e => setRole(e.target.value)} style={pwInput}>
+            <option value="editor">Editor — แก้คอนเทนต์ได้อย่างเดียว</option>
+            <option value="admin">Admin — แก้คอนเทนต์ + จัดการผู้ใช้ + ดู audit</option>
+          </select>
+        </Field>
+
+        {err && (
+          <div style={{
+            padding: '8px 12px', borderRadius: 8,
+            background: 'rgba(180,70,58,0.08)', color: '#B4463A', fontSize: 12,
+            marginBottom: 12,
+          }}>{err}</div>
+        )}
+
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 8 }}>
+          <button type="button" onClick={onClose} disabled={busy} style={{
+            padding: '9px 16px', borderRadius: 8, border: '1px solid rgba(0,0,0,0.12)',
+            background: '#fff', fontFamily: 'inherit', fontSize: 13, cursor: 'pointer',
+          }}>ยกเลิก</button>
+          <button type="submit" disabled={busy} style={{
+            padding: '9px 20px', borderRadius: 8, border: 'none',
+            background: busy ? '#8F877C' : '#1F1B17', color: '#fff',
+            fontFamily: 'inherit', fontSize: 13, fontWeight: 600,
+            cursor: busy ? 'not-allowed' : 'pointer',
+          }}>{busy ? 'กำลังสร้าง…' : 'สร้างบัญชี'}</button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+function friendlyCreateError(code) {
+  switch (code) {
+    case 'login_id_taken': return 'Login ID นี้มีอยู่แล้ว';
+    case 'weak':           return 'รหัสผ่านไม่แข็งแรงพอ — เพิ่มความหลากหลาย';
+    case 'breached':       return 'รหัสนี้เคยรั่วไหล — เลือกรหัสอื่น';
+    case 'too_short':      return 'รหัสผ่านสั้นเกินไป';
+    case 'forbidden':      return 'ไม่มีสิทธิ์เพิ่มผู้ใช้ (ต้องเป็น admin)';
+    case 'invalid_input':  return 'ข้อมูลไม่ถูกต้อง';
+    default:               return 'สร้างบัญชีไม่สำเร็จ';
+  }
+}
+
 // ─── Audit tab: paginated log viewer ────────────────────────
 function AuditTab() {
   const [rows, setRows] = React.useState([]);
@@ -254,7 +378,13 @@ function AuditTab() {
 
   React.useEffect(() => { load(true); /* eslint-disable-next-line */ }, [filter]);
 
-  const ACTION_TYPES = ['', 'login_success', 'login_fail', 'login_locked', 'login_unknown', 'login_disabled', 'config_update', 'password_change', 'user_disable', 'user_enable', 'sessions_revoke'];
+  const ACTION_TYPES = [
+    '',
+    'login_success', 'login_fail', 'login_locked', 'login_unknown', 'login_disabled',
+    'config_update',
+    'password_change', 'password_change_fail',
+    'user_create', 'user_disable', 'user_enable', 'sessions_revoke',
+  ];
 
   return (
     <div>

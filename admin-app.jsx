@@ -1,10 +1,16 @@
 // AdminApp.jsx — browser-based admin panel
 
-function AdminShell({ state, setState, onPreview, liveMode, authed, onLogout, me }) {
-  const [tab, setTab] = React.useState('buttons');
+function AdminShell({ state, setState, onPreview, liveMode, authed, onLogout, me, onPasswordChanged }) {
+  const mustChange = !!(me && me.mustChangePassword);
+  const [tab, setTab] = React.useState(mustChange ? 'security' : 'buttons');
   const theme = THEMES[state.theme] || THEMES.cream;
 
-  const isAdmin = !me || me.role === 'admin';   // demo mode → assume admin
+  // If user MUST change password, lock them to the security tab until done.
+  React.useEffect(() => {
+    if (mustChange && tab !== 'security') setTab('security');
+  }, [mustChange, tab]);
+
+  const isAdmin = !me || me.role === 'admin';
   const baseTabs = [
     { id: 'buttons', label: 'ปุ่มเมนู', icon: 'sparkle' },
     { id: 'banner',  label: 'แบนเนอร์', icon: 'image' },
@@ -12,13 +18,15 @@ function AdminShell({ state, setState, onPreview, liveMode, authed, onLogout, me
     { id: 'theme',   label: 'ธีม & แบรนด์', icon: 'settings' },
   ];
   const adminOnlyTabs = liveMode ? [
-    { id: 'security', label: 'ความปลอดภัย', icon: 'settings', adminOnly: false },
+    { id: 'security', label: 'ความปลอดภัย', icon: 'settings' },
     ...(isAdmin ? [
-      { id: 'users', label: 'ผู้ดูแล', icon: 'heart', adminOnly: true },
-      { id: 'audit', label: 'บันทึกใช้งาน', icon: 'book', adminOnly: true },
+      { id: 'users', label: 'ผู้ดูแล', icon: 'heart' },
+      { id: 'audit', label: 'บันทึกใช้งาน', icon: 'book' },
     ] : []),
   ] : [];
-  const tabs = [...baseTabs, ...adminOnlyTabs];
+  const tabs = mustChange
+    ? [{ id: 'security', label: 'เปลี่ยนรหัสผ่าน', icon: 'settings' }]
+    : [...baseTabs, ...adminOnlyTabs];
 
   return (
     <div style={{
@@ -85,7 +93,7 @@ function AdminShell({ state, setState, onPreview, liveMode, authed, onLogout, me
         {tab === 'banner'   && <BannerEditor state={state} setState={setState}/>}
         {tab === 'contact'  && <ContactEditor state={state} setState={setState}/>}
         {tab === 'theme'    && <ThemeEditor state={state} setState={setState}/>}
-        {tab === 'security' && typeof SecurityTab === 'function' && <SecurityTab onLogout={onLogout}/>}
+        {tab === 'security' && typeof SecurityTab === 'function' && <SecurityTab onLogout={onLogout} mustChange={mustChange} onPasswordChanged={onPasswordChanged}/>}
         {tab === 'users'    && typeof UsersTab    === 'function' && <UsersTab currentUserId={me && me.id}/>}
         {tab === 'audit'    && typeof AuditTab    === 'function' && <AuditTab/>}
       </main>

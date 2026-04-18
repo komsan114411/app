@@ -118,6 +118,7 @@ const api = {
     return request('/api/admin/audit?' + q.toString(), { auth: true });
   },
   async listUsers()              { return request('/api/admin/users', { auth: true }); },
+  async createUser(body)         { return request('/api/admin/users', { method: 'POST', body, auth: true }); },
   async userAction(id, action)   { return request(`/api/admin/users/${id}/${action}`, { method: 'POST', auth: true }); },
   async changePassword(currentPassword, newPassword) {
     return request('/api/admin/me/password', { method: 'POST', body: { currentPassword, newPassword }, auth: true });

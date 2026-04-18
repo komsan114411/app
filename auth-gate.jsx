@@ -1,7 +1,7 @@
 // auth-gate.jsx — Admin login screen (shown when liveMode && !authed)
 
 function AuthGate({ onSuccess }) {
-  const [email, setEmail] = React.useState('');
+  const [loginId, setLoginId] = React.useState('');
   const [password, setPassword] = React.useState('');
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState(null);
@@ -12,7 +12,6 @@ function AuthGate({ onSuccess }) {
   const locked = lockedUntil > now;
   const lockSeconds = locked ? Math.ceil((lockedUntil - now) / 1000) : 0;
 
-  // Client-side throttle (server enforces real lockout)
   React.useEffect(() => {
     if (!locked) return;
     const t = setInterval(() => setLockedUntil(v => v), 1000);
@@ -24,12 +23,12 @@ function AuthGate({ onSuccess }) {
     if (busy || locked) return;
     setError(null);
 
-    const emailClean = (email || '').trim().toLowerCase().slice(0, 254);
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailClean)) {
-      setError('อีเมลไม่ถูกต้อง'); return;
+    const id = (loginId || '').trim().toLowerCase().slice(0, 64);
+    if (!/^[a-z0-9._@-]{3,64}$/.test(id)) {
+      setError('Login ID ใช้ได้แค่ a–z 0–9 . _ - @ (3–64 ตัว)'); return;
     }
-    if (!password || password.length < 10) {
-      setError('รหัสผ่านต้องอย่างน้อย 10 ตัวอักษร'); return;
+    if (!password || password.length < 1) {
+      setError('กรอกรหัสผ่าน'); return;
     }
     if (password.length > 200) {
       setError('รหัสผ่านยาวเกินไป'); return;
@@ -38,7 +37,7 @@ function AuthGate({ onSuccess }) {
     setBusy(true);
     let succeeded = false;
     try {
-      const user = await api.login(emailClean, password);
+      const user = await api.login(id, password);
       succeeded = true;
       setAttempts(0);
       onSuccess?.(user);
@@ -48,17 +47,20 @@ function AuthGate({ onSuccess }) {
       if (next >= 5) setLockedUntil(Date.now() + 60_000);
       setError(friendly(err.message));
     } finally {
-      // ALWAYS wipe password from React state — success OR failure.
       setPassword('');
       setBusy(false);
       if (!succeeded) {
-        // Also clear the underlying <input> in case React retains a ref
         try {
           const el = document.querySelector('input[type="password"]');
           if (el) el.value = '';
         } catch {}
       }
     }
+  };
+
+  const fillDefault = () => {
+    setLoginId('admin123');
+    setPassword('admin123');
   };
 
   return (
@@ -68,7 +70,7 @@ function AuthGate({ onSuccess }) {
       padding: 40, fontFamily: '"IBM Plex Sans Thai", system-ui',
     }}>
       <form onSubmit={submit} autoComplete="off" style={{
-        width: 340, background: '#fff', borderRadius: 18, padding: 28,
+        width: 360, background: '#fff', borderRadius: 18, padding: 28,
         boxShadow: '0 20px 60px -20px rgba(0,0,0,0.15)',
         border: '1px solid rgba(0,0,0,0.06)',
       }}>
@@ -84,14 +86,18 @@ function AuthGate({ onSuccess }) {
           <div style={{ fontSize: 12, color: '#6B6458' }}>เข้าสู่ระบบเพื่อจัดการเนื้อหา</div>
         </div>
 
-        <label style={{ display: 'block', fontSize: 11, fontWeight: 600, color: '#3E3A34', marginBottom: 6 }}>อีเมล</label>
+        <label style={{ display: 'block', fontSize: 11, fontWeight: 600, color: '#3E3A34', marginBottom: 6 }}>Login ID</label>
         <input
-          type="email"
-          value={email}
-          onChange={e => setEmail(e.target.value.slice(0, 254))}
+          type="text"
+          value={loginId}
+          onChange={e => setLoginId(e.target.value.slice(0, 64))}
           required
           autoComplete="username"
-          maxLength={254}
+          autoCapitalize="off"
+          autoCorrect="off"
+          spellCheck={false}
+          maxLength={64}
+          placeholder="admin123"
           disabled={busy || locked}
           style={inputStyle}
         />
@@ -103,8 +109,9 @@ function AuthGate({ onSuccess }) {
           onChange={e => setPassword(e.target.value.slice(0, 200))}
           required
           autoComplete="current-password"
-          minLength={10}
+          minLength={1}
           maxLength={200}
+          placeholder="admin123"
           disabled={busy || locked}
           style={inputStyle}
         />
@@ -131,8 +138,23 @@ function AuthGate({ onSuccess }) {
           {busy ? 'กำลังตรวจสอบ…' : locked ? 'ถูกระงับชั่วคราว' : 'เข้าสู่ระบบ'}
         </button>
 
-        <div style={{ fontSize: 10, color: '#8F877C', textAlign: 'center', marginTop: 16, lineHeight: 1.5 }}>
-          ระบบใช้ bcrypt + JWT rotation · ล็อกอัตโนมัติหลังใส่ผิด 10 ครั้ง
+        <div style={{
+          marginTop: 16, padding: '10px 12px', borderRadius: 9,
+          background: 'rgba(210,150,40,0.1)', border: '1px dashed rgba(210,150,40,0.4)',
+          fontSize: 11, color: '#7A5A10', lineHeight: 1.55,
+        }}>
+          <strong>เปิดใช้ครั้งแรก:</strong> Login ID <code>admin123</code> รหัส <code>admin123</code>
+          <button type="button" onClick={fillDefault} disabled={busy || locked} style={{
+            marginLeft: 6, padding: '2px 8px', borderRadius: 5,
+            border: '1px solid rgba(210,150,40,0.5)', background: 'rgba(255,255,255,0.7)',
+            fontFamily: 'inherit', fontSize: 10, cursor: 'pointer', color: '#7A5A10',
+          }}>เติมให้</button>
+          <br/>
+          <span style={{ opacity: 0.8 }}>ระบบจะบังคับเปลี่ยนรหัสทันทีหลังเข้าระบบ</span>
+        </div>
+
+        <div style={{ fontSize: 10, color: '#8F877C', textAlign: 'center', marginTop: 14, lineHeight: 1.5 }}>
+          argon2id · JWT rotation · ล็อกอัตโนมัติหลังผิด 10 ครั้ง
         </div>
       </form>
     </div>
@@ -148,7 +170,7 @@ const inputStyle = {
 
 function friendly(code) {
   switch (code) {
-    case 'invalid_credentials': return 'อีเมลหรือรหัสผ่านไม่ถูกต้อง';
+    case 'invalid_credentials': return 'Login ID หรือรหัสผ่านไม่ถูกต้อง';
     case 'account_locked':      return 'บัญชีถูกล็อคชั่วคราว ลองใหม่ภายหลัง';
     case 'rate_limited':        return 'พยายามมากเกินไป รอสักครู่';
     case 'request_failed':      return 'เชื่อมต่อเซิร์ฟเวอร์ไม่ได้';

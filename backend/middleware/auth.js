@@ -24,7 +24,7 @@ export async function requireAuth(req, res, next) {
     return res.status(401).json({ error: 'token_stale' });
   }
 
-  req.user = { id: String(user._id), role: user.role, email: user.email };
+  req.user = { id: String(user._id), role: user.role, loginId: user.loginId };
   next();
 }
 

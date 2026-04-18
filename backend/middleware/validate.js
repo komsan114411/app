@@ -3,8 +3,14 @@
 import { z } from 'zod';
 
 export const loginBody = z.object({
-  email: z.string().email().max(254).transform(s => s.toLowerCase().trim()),
-  password: z.string().min(10).max(200),
+  loginId: z.string().min(3).max(64).regex(/^[a-zA-Z0-9._@-]+$/, 'bad_id').transform(s => s.toLowerCase().trim()),
+  password: z.string().min(1).max(200),
+});
+
+export const createUserBody = z.object({
+  loginId: z.string().min(3).max(64).regex(/^[a-zA-Z0-9._@-]+$/, 'bad_id').transform(s => s.toLowerCase().trim()),
+  password: z.string().min(12).max(200),
+  role: z.enum(['admin', 'editor']).default('editor'),
 });
 
 export const trackBody = z.object({

@@ -33,14 +33,14 @@ afterAll(async () => {
   if (mongod) await mongod.stop();
 });
 
-export async function createAdmin(email = 'admin@test.com', password = 'CorrectHorseBattery9!') {
+export async function createAdmin(loginId = 'admintest', password = 'CorrectHorseBattery9!') {
   const { User } = await import('../models/User.js');
-  const u = new User({ email, role: 'admin' });
+  const u = new User({ loginId, role: 'admin' });
   // Bypass password policy in tests (skip zxcvbn/HIBP) by writing hash directly
   const { hash: argonHash, Algorithm } = await import('@node-rs/argon2');
   u.passwordHash = await argonHash(password, {
     algorithm: Algorithm.Argon2id,
-    memoryCost: 19456, timeCost: 2, parallelism: 1,   // lowered for test speed
+    memoryCost: 19456, timeCost: 2, parallelism: 1,
   });
   await u.save();
   return { user: u, password };
