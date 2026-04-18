@@ -1,0 +1,7 @@
+Contact: mailto:security@your-domain.example.com
+Expires: 2027-01-01T00:00:00.000Z
+Preferred-Languages: th, en
+Canonical: https://your-domain.example.com/.well-known/security.txt
+Policy: https://your-domain.example.com/security-policy
+# Please report vulnerabilities responsibly. We do not currently offer a bug bounty
+# but credit researchers on our security page for valid findings.

@@ -1,0 +1,65 @@
+version: '3.9'
+
+services:
+  mongo:
+    image: mongo:7.0
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USER:-root}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:?set MONGO_ROOT_PASSWORD}
+      MONGO_INITDB_DATABASE: baansuan
+    volumes:
+      - mongo_data:/data/db
+      - mongo_config:/data/configdb
+    networks:
+      - internal
+    # Do NOT expose port to host in prod — only other containers talk to it.
+    # Open 27017 briefly with `docker compose port mongo 27017` if debugging.
+    command: ["--auth", "--bind_ip_all"]
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.runCommand('ping').ok"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      mongo:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 4000
+      MONGO_URI: mongodb://${MONGO_ROOT_USER:-root}:${MONGO_ROOT_PASSWORD}@mongo:27017/baansuan?authSource=admin
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET}
+      REFRESH_SECRET: ${REFRESH_SECRET:?set REFRESH_SECRET}
+      BCRYPT_COST: "12"
+      CORS_ORIGINS: ${CORS_ORIGINS:?set CORS_ORIGINS}
+      COOKIE_DOMAIN: ${COOKIE_DOMAIN:-}
+      COOKIE_SECURE: ${COOKIE_SECURE:-true}
+      IP_SALT: ${IP_SALT:?set IP_SALT}
+      TRUST_PROXY: "1"
+    ports:
+      - "127.0.0.1:4000:4000"   # bind to loopback — reverse proxy fronts TLS
+    networks:
+      - internal
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+
+networks:
+  internal:
+    driver: bridge
+
+volumes:
+  mongo_data:
+  mongo_config:

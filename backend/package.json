@@ -1,0 +1,42 @@
+{
+  "name": "baansuan-api",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Production backend for Baansuan link-in-bio app",
+  "engines": {
+    "node": ">=20.10.0"
+  },
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "seed": "node seed.js",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "audit": "npm audit --omit=dev --audit-level=high"
+  },
+  "devDependencies": {
+    "mongodb-memory-server": "10.1.2",
+    "supertest": "7.0.0",
+    "vitest": "2.1.8"
+  },
+  "dependencies": {
+    "@node-rs/argon2": "2.0.2",
+    "compression": "1.7.5",
+    "cookie-parser": "1.4.7",
+    "cors": "2.8.5",
+    "dotenv": "16.4.7",
+    "express": "4.21.2",
+    "express-mongo-sanitize": "2.2.0",
+    "express-rate-limit": "7.5.0",
+    "helmet": "8.0.0",
+    "hpp": "0.2.3",
+    "jsonwebtoken": "9.0.2",
+    "mongoose": "8.9.5",
+    "pino": "9.6.0",
+    "pino-http": "10.3.0",
+    "zod": "3.24.1",
+    "zxcvbn": "4.4.2"
+  }
+}

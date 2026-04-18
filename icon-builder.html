@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<title>Icon Builder</title>
+<style>
+  body { font-family: system-ui; background: #EDE7DB; padding: 40px; text-align: center; }
+  .row { display: flex; justify-content: center; gap: 20px; flex-wrap: wrap; margin-top: 30px; }
+  .box { background: #fff; padding: 20px; border-radius: 14px; box-shadow: 0 8px 30px -14px rgba(0,0,0,0.2); }
+  canvas { border: 1px solid #ddd; border-radius: 8px; }
+  button { margin-top: 12px; padding: 10px 18px; border-radius: 9px; border: none; background: #1F1B17; color: #fff; font-family: inherit; font-size: 13px; cursor: pointer; }
+  p { color: #6B6458; font-size: 13px; }
+</style>
+</head>
+<body>
+<h1>PWA Icon Builder</h1>
+<p>กด "Download" แต่ละไอคอน บันทึกเป็นไฟล์ชื่อเดียวกับที่แสดง (วางคู่กับ index.html)</p>
+<div class="row">
+  <div class="box"><canvas id="c192" width="192" height="192"></canvas><br><button onclick="dl(c192,'icon-192.png')">Download icon-192.png</button></div>
+  <div class="box"><canvas id="c512" width="512" height="512"></canvas><br><button onclick="dl(c512,'icon-512.png')">Download icon-512.png</button></div>
+  <div class="box"><canvas id="cMask" width="512" height="512"></canvas><br><button onclick="dl(cMask,'icon-maskable-512.png')">Download icon-maskable-512.png</button></div>
+</div>
+
+<script>
+function draw(ctx, size, maskable) {
+  const r = size;
+  // Background gradient
+  const g = ctx.createLinearGradient(0, 0, r, r);
+  g.addColorStop(0, '#2A231D');
+  g.addColorStop(1, '#0F0B08');
+  ctx.fillStyle = g;
+  // Maskable needs padding (safe zone = 80% center)
+  const pad = maskable ? r * 0.1 : 0;
+  const radius = maskable ? 0 : r * 0.22;
+  roundRect(ctx, pad, pad, r - pad * 2, r - pad * 2, radius);
+  ctx.fill();
+
+  // Center content scaled to inner area
+  const cx = r / 2, cy = r / 2;
+  const scale = (r - pad * 2) / 512;
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.scale(scale, scale);
+
+  // Outer ring
+  ctx.strokeStyle = 'rgba(237,231,219,0.18)';
+  ctx.lineWidth = 10;
+  ctx.beginPath(); ctx.arc(0, 0, 150, 0, Math.PI * 2); ctx.stroke();
+
+  // Lines
+  ctx.strokeStyle = '#EDE7DB';
+  ctx.lineCap = 'round';
+  ctx.lineWidth = 16;
+  const lines = [[-40, 0.9], [0, 0.7], [40, 0.55]];
+  lines.forEach(([y, op], i) => {
+    ctx.globalAlpha = op;
+    ctx.beginPath();
+    ctx.moveTo(-80, y);
+    ctx.lineTo(i === 2 ? 20 : 80, y);
+    ctx.stroke();
+  });
+  ctx.globalAlpha = 1;
+
+  // Accent dot
+  ctx.fillStyle = '#D19F40';
+  ctx.beginPath(); ctx.arc(60, 60, 18, 0, Math.PI * 2); ctx.fill();
+
+  ctx.restore();
+}
+
+function roundRect(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
+function dl(canvas, name) {
+  canvas.toBlob(blob => {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = name;
+    a.click();
+  }, 'image/png');
+}
+
+draw(c192.getContext('2d'), 192, false);
+draw(c512.getContext('2d'), 512, false);
+draw(cMask.getContext('2d'), 512, true);
+</script>
+</body>
+</html>

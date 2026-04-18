@@ -1,0 +1,45 @@
+# dependencies
+node_modules/
+.pnp
+.pnp.js
+.yarn/
+
+# build output
+dist/
+build/
+.cache/
+.vite/
+
+# env & secrets — NEVER commit
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+
+# logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+pino-*.log
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# test / coverage
+coverage/
+.nyc_output/
+
+# runtime
+.pm2/
+pids/
+*.pid
+
+# local-only design work
+_design_source/

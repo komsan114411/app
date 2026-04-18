@@ -1,0 +1,26 @@
+{
+  "appId": "com.myapp.baansuan",
+  "appName": "MyApp",
+  "webDir": "www",
+  "bundledWebRuntime": false,
+  "backgroundColor": "#EDE7DB",
+  "android": {
+    "buildOptions": {
+      "keystorePath": "myapp-release.keystore",
+      "keystoreAlias": "myapp"
+    },
+    "allowMixedContent": false,
+    "captureInput": true,
+    "webContentsDebuggingEnabled": false
+  },
+  "server": {
+    "androidScheme": "https",
+    "iosScheme": "https",
+    "cleartext": false
+  },
+  "plugins": {
+    "App": {
+      "launchUrl": "index.html"
+    }
+  }
+}

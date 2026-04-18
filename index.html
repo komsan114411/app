@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<title>แอป หน้าบ้าน & หลังบ้าน</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+
+<!--
+  ─────────────────────────────────────────────────────────────
+  SECURITY HEADERS (defense in depth — duplicated by server)
+  ─────────────────────────────────────────────────────────────
+  CSP script-src needs 'unsafe-inline' because Babel Standalone
+  compiles type="text/babel" at runtime. Production build should
+  pre-compile JSX and drop 'unsafe-inline'.
+-->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://unpkg.com 'unsafe-inline'; style-src 'self' https://fonts.googleapis.com 'unsafe-inline'; font-src https://fonts.gstatic.com data:; img-src 'self' data: https:; connect-src 'self' https:; object-src 'none'; base-uri 'none'; frame-ancestors 'self'; form-action 'self'; upgrade-insecure-requests">
+<meta http-equiv="X-Content-Type-Options" content="nosniff">
+<meta name="referrer" content="strict-origin-when-cross-origin">
+<meta name="color-scheme" content="light">
+<meta name="theme-color" content="#1F1B17">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="MyApp">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-192.png">
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Thai:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  html, body {
+    margin: 0; padding: 0; background: #EDE7DB;
+    font-family: "IBM Plex Sans Thai", -apple-system, system-ui, sans-serif;
+    color: #1F1B17; min-height: 100vh;
+    -webkit-font-smoothing: antialiased;
+  }
+  * { box-sizing: border-box; }
+
+  .stage {
+    min-height: 100vh; padding: 32px 24px 80px;
+    display: flex; flex-direction: column; align-items: center; gap: 28px;
+  }
+  .toolbar {
+    display: flex; align-items: center; gap: 6px;
+    background: #fff; border: 1px solid rgba(0,0,0,0.06);
+    border-radius: 999px; padding: 6px;
+    box-shadow: 0 8px 30px -14px rgba(0,0,0,0.18);
+  }
+  .toolbar button {
+    padding: 9px 18px; border-radius: 999px; border: none;
+    font-family: inherit; font-size: 13px; font-weight: 500;
+    cursor: pointer; background: transparent; color: #6B6458;
+    display: flex; align-items: center; gap: 8px;
+    transition: all 220ms ease;
+  }
+  .toolbar button.active { background: #1F1B17; color: #fff; }
+
+  .header-copy { text-align: center; max-width: 640px; }
+  .header-copy h1 {
+    font-size: 26px; font-weight: 700; margin: 0 0 6px; letter-spacing: -0.4px;
+  }
+  .header-copy p {
+    margin: 0; color: #6B6458; font-size: 14px; line-height: 1.55;
+  }
+  .views {
+    width: 100%; max-width: 1280px;
+    display: flex; justify-content: center; align-items: flex-start; gap: 40px;
+    flex-wrap: wrap;
+  }
+
+  .view { animation: viewIn 520ms cubic-bezier(0.16, 0.84, 0.44, 1) both; }
+  @keyframes viewIn {
+    from { opacity: 0; transform: translateY(16px) scale(0.98); }
+    to   { opacity: 1; transform: translateY(0) scale(1); }
+  }
+  .ua-enter { animation: uaIn 560ms cubic-bezier(0.2, 0.8, 0.3, 1) both; }
+  @keyframes uaIn {
+    from { opacity: 0; transform: translateY(14px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  .ua-tile:hover { transform: translateY(-2px); }
+  .ad-tab { animation: adTab 340ms cubic-bezier(0.2, 0.8, 0.3, 1) both; }
+  @keyframes adTab {
+    from { opacity: 0; transform: translateX(8px); }
+    to   { opacity: 1; transform: translateX(0); }
+  }
+  @keyframes toastIn {
+    from { opacity: 0; transform: translateY(20px) scale(0.96); }
+    to   { opacity: 1; transform: translateY(0) scale(1); }
+  }
+  .caption {
+    font-size: 11px; letter-spacing: 1.2px; text-transform: uppercase;
+    color: #8F877C; font-weight: 600; margin-bottom: 10px; text-align: center;
+  }
+  .tweaks {
+    position: fixed; bottom: 18px; right: 18px; z-index: 999;
+    background: #fff; border: 1px solid rgba(0,0,0,0.08);
+    border-radius: 14px; padding: 14px 16px; width: 260px;
+    box-shadow: 0 30px 60px -20px rgba(0,0,0,0.25);
+    font-family: "IBM Plex Sans Thai", system-ui;
+    display: none;
+  }
+  .tweaks.show { display: block; }
+  .tweaks h4 { margin: 0 0 10px; font-size: 13px; }
+  .tweaks label { display: block; font-size: 11px; color: #6B6458; margin-bottom: 4px; }
+  .tweaks select, .tweaks input[type=range] {
+    width: 100%; padding: 6px 8px; border-radius: 7px;
+    border: 1px solid rgba(0,0,0,0.12); font-family: inherit; font-size: 12px;
+    margin-bottom: 10px;
+  }
+</style>
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js"
+        integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L"
+        crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js"
+        integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm"
+        crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js"
+        integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y"
+        crossorigin="anonymous"></script>
+</head>
+<body>
+<div id="root"></div>
+<noscript>
+  <div style="padding: 40px; text-align: center; font-family: system-ui;">
+    แอปนี้ต้องใช้ JavaScript · กรุณาเปิด JavaScript ในเบราว์เซอร์
+  </div>
+</noscript>
+
+<script>
+const TWEAKS = /*EDITMODE-BEGIN*/{
+  "showAllScreens": true,
+  "defaultView": "admin"
+}/*EDITMODE-END*/;
+// Optional: set API base before scripts load to enable live server mode.
+// window.API_BASE = 'https://api.your-domain.tld';
+
+// ── PWA: register service worker once the page is idle ──
+if ('serviceWorker' in navigator && location.protocol !== 'file:') {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('./sw.js').catch(() => {});
+  });
+}
+</script>
+
+<script type="text/babel" src="security.jsx"></script>
+<script type="text/babel" src="icons.jsx"></script>
+<script type="text/babel" src="app-state.jsx"></script>
+<script type="text/babel" src="api-client.jsx"></script>
+<script type="text/babel" src="ios-frame.jsx"></script>
+<script type="text/babel" src="browser-window.jsx"></script>
+<script type="text/babel" src="user-app.jsx"></script>
+<script type="text/babel" src="auth-gate.jsx"></script>
+<script type="text/babel" src="admin-tabs.jsx"></script>
+<script type="text/babel" src="admin-app.jsx"></script>
+<script type="text/babel" src="consent-banner.jsx"></script>
+
+<script type="text/babel" data-presets="react">
+const { useState, useEffect, useMemo, useRef } = React;
+
+function App() {
+  const [state, setState] = useState(DEFAULT_STATE);
+  const [liveMode, setLiveMode] = useState(false);
+  const [authed, setAuthed] = useState(false);
+  const [me, setMe] = useState(null);       // { id, email, role }
+  const [bootError, setBootError] = useState(null);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const boot = await loadInitialState();
+        // Live mode: server is the source of truth. Wipe stale demo state.
+        if (boot.live) {
+          try { localStorage.removeItem('appState_v2'); } catch {}
+        }
+        setState(boot.state);
+        setLiveMode(boot.live);
+        setAuthed(boot.authed || false);
+      } catch (e) {
+        setBootError(String(e.message || 'boot_failed').slice(0, 120));
+      }
+    })();
+  }, []);
+
+  // In demo mode, restore previous session from localStorage.
+  useEffect(() => {
+    if (liveMode) return;
+    try {
+      const saved = localStorage.getItem('appState_v2');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        const clean = SafeState.sanitize(parsed);
+        if (clean) setState(clean);
+      }
+    } catch {}
+  }, [liveMode]);
+
+  // In demo mode, persist. In live mode, the server is the truth.
+  useEffect(() => {
+    if (liveMode) return;
+    try { localStorage.setItem('appState_v2', JSON.stringify(state)); } catch {}
+  }, [state, liveMode]);
+
+  const [view, setView] = useState(() => {
+    try { return localStorage.getItem('view') || TWEAKS.defaultView || 'user'; }
+    catch { return TWEAKS.defaultView || 'user'; }
+  });
+  useEffect(() => { try { localStorage.setItem('view', view); } catch {} }, [view]);
+
+  const [showBoth, setShowBoth] = useState(!!TWEAKS.showAllScreens);
+
+  const pageKey = useMemo(() =>
+    state.theme + '-' + state.buttons.length + '-' + state.banners.length,
+    [state.theme, state.buttons.length, state.banners.length]
+  );
+
+  // Debounced server save (live mode + authed only)
+  const saveTimer = useRef(null);
+  const setStateAndPersist = (updater) => {
+    setState(prev => {
+      const next = typeof updater === 'function' ? updater(prev) : updater;
+      const clean = SafeState.sanitize(next) || prev;
+      if (liveMode && authed) {
+        clearTimeout(saveTimer.current);
+        saveTimer.current = setTimeout(() => {
+          api.patchConfig(clean).catch(err => console.warn('save_failed', err.message));
+        }, 600);
+      }
+      return clean;
+    });
+  };
+
+  // Tweaks panel — only trust messages from the parent frame, and only
+  // when we're actually embedded (not running standalone).
+  const [tweakOpen, setTweakOpen] = useState(false);
+  const parentOrigin = useRef(null);
+  useEffect(() => {
+    if (window === window.parent) return;  // standalone — nothing to do
+    const handler = (e) => {
+      if (e.source !== window.parent) return;
+      if (!e.data || typeof e.data !== 'object') return;
+      // Pin the editor's origin on the first trusted message we see.
+      if (!parentOrigin.current) parentOrigin.current = e.origin;
+      else if (e.origin !== parentOrigin.current) return;
+      if (e.data.type === '__activate_edit_mode') setTweakOpen(true);
+      if (e.data.type === '__deactivate_edit_mode') setTweakOpen(false);
+    };
+    window.addEventListener('message', handler);
+    // Initial handshake: we don't know the editor origin yet, so use '*' ONCE.
+    // The payload carries no secrets.
+    try { window.parent.postMessage({ type: '__edit_mode_available' }, '*'); } catch {}
+    return () => window.removeEventListener('message', handler);
+  }, []);
+
+  const setTweak = (patch) => {
+    if (window !== window.parent && parentOrigin.current) {
+      try { window.parent.postMessage({ type: '__edit_mode_set_keys', edits: patch }, parentOrigin.current); } catch {}
+    }
+    if ('showAllScreens' in patch) setShowBoth(patch.showAllScreens);
+  };
+
+  const userView = (
+    <div className="view" data-screen-label="User Home" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+      <div className="caption">
+        หน้าผู้ใช้ · User View
+        {liveMode && <span style={{ color: '#06C755', marginLeft: 6 }}>● LIVE</span>}
+      </div>
+      <IOSDevice width={382} height={790}>
+        <UserApp
+          state={state}
+          pageKey={pageKey}
+          onButtonPress={(b) => { if (liveMode) api.trackClick(b.id, b.label); }}
+        />
+      </IOSDevice>
+    </div>
+  );
+
+  const adminView = (
+    <div className="view" data-screen-label="Admin Panel" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+      <div className="caption">
+        หน้าแอดมิน · Admin Console
+        {liveMode && !authed && <span style={{ color: '#B4463A', marginLeft: 6 }}>● ต้องเข้าสู่ระบบ</span>}
+        {liveMode && authed && <span style={{ color: '#06C755', marginLeft: 6 }}>● AUTHED</span>}
+      </div>
+      <ChromeWindow
+        tabs={[{ title: SafeText.truncate(state.appName, 40) + ' — Admin' }]}
+        activeIndex={0}
+        url={`admin.${SafeText.slug(state.appName)}.app/console`}
+        width={800} height={790}
+      >
+        {liveMode && !authed ? (
+          <AuthGate onSuccess={async (user) => {
+            setAuthed(true);
+            if (user) setMe(user);
+            try { const cfg = await api.getAdminConfig(); setState(s => SafeState.sanitize({ ...s, ...cfg }) || s); } catch {}
+          }} />
+        ) : (
+          <AdminShell
+            state={state}
+            setState={setStateAndPersist}
+            liveMode={liveMode}
+            authed={authed}
+            me={me}
+            onLogout={async () => { try { await api.logout(); } catch {} setAuthed(false); setMe(null); }}
+            onPreview={() => { setShowBoth(false); setView('user'); }}
+          />
+        )}
+      </ChromeWindow>
+    </div>
+  );
+
+  return (
+    <div className="stage">
+      <div className="header-copy">
+        <h1>แอปหน้าบ้าน & หลังบ้าน</h1>
+        <p>หน้าผู้ใช้มีปุ่มเมนู 1–12 ปุ่ม ปุ่มติดต่อแอดมิน และแบนเนอร์ที่หมุนอัตโนมัติ · แอดมินแก้ไขในแผงควบคุม แล้วอัปเดตแบบเรียลไทม์</p>
+        {bootError && <p style={{ color: '#B4463A', fontSize: 12, marginTop: 8 }}>โหลดคอนฟิกจากเซิร์ฟเวอร์ไม่สำเร็จ — ใช้โหมด demo</p>}
+      </div>
+
+      <div className="toolbar" role="tablist">
+        <button
+          className={!showBoth && view === 'user' ? 'active' : ''}
+          onClick={() => { setShowBoth(false); setView('user'); setTweak({ showAllScreens: false, defaultView: 'user' }); }}>
+          <span style={{ fontSize: 14 }}>📱</span> หน้าผู้ใช้
+        </button>
+        <button
+          className={!showBoth && view === 'admin' ? 'active' : ''}
+          onClick={() => { setShowBoth(false); setView('admin'); setTweak({ showAllScreens: false, defaultView: 'admin' }); }}>
+          <span style={{ fontSize: 14 }}>🖥</span> หลังบ้าน
+        </button>
+        <button
+          className={showBoth ? 'active' : ''}
+          onClick={() => { setShowBoth(true); setTweak({ showAllScreens: true }); }}>
+          <span style={{ fontSize: 14 }}>⇌</span> ทั้งสองหน้า
+        </button>
+      </div>
+
+      <div className="views" key={showBoth ? 'both' : view}>
+        {showBoth ? (<>{userView}{adminView}</>) : (view === 'user' ? userView : adminView)}
+      </div>
+
+      {liveMode && typeof ConsentBanner === 'function' && <ConsentBanner/>}
+
+      <div className={'tweaks ' + (tweakOpen ? 'show' : '')}>
+        <h4>Tweaks</h4>
+        <label>ธีมสี</label>
+        <select value={state.theme} onChange={e => setStateAndPersist(s => ({ ...s, theme: SafeText.pickTheme(e.target.value) }))}>
+          {Object.keys(THEMES).map(k => <option key={k} value={k}>{k}</option>)}
+        </select>
+        <label>มุมมอง</label>
+        <select
+          value={showBoth ? 'both' : view}
+          onChange={e => {
+            const v = e.target.value;
+            if (v === 'both') { setShowBoth(true); setTweak({ showAllScreens: true }); }
+            else { setShowBoth(false); setView(v); setTweak({ showAllScreens: false, defaultView: v }); }
+          }}>
+          <option value="user">หน้าผู้ใช้</option>
+          <option value="admin">หลังบ้าน</option>
+          <option value="both">ทั้งสองหน้า</option>
+        </select>
+        <label>จำนวนปุ่มเมนู: {state.buttons.length}</label>
+        <input type="range" min="1" max={MAX_BUTTONS} value={state.buttons.length}
+          onChange={e => {
+            const n = Math.min(MAX_BUTTONS, Math.max(1, Number(e.target.value) || 1));
+            setStateAndPersist(s => {
+              const arr = [...s.buttons];
+              const pool = ['sparkle','heart','gift','calendar','camera','music'];
+              while (arr.length < n) arr.push({
+                id: 'g' + Math.random().toString(36).slice(2,7),
+                label: 'ปุ่มใหม่', sub: '', icon: pool[arr.length % pool.length], url: '',
+              });
+              while (arr.length > n) arr.pop();
+              return { ...s, buttons: arr };
+            });
+          }}/>
+        <button onClick={() => {
+            if (!window.confirm('รีเซ็ตข้อมูล demo ทั้งหมด?')) return;
+            try { localStorage.removeItem('appState_v2'); } catch {}
+            setState(DEFAULT_STATE);
+          }}
+          style={{ width: '100%', padding: '7px', borderRadius: 7, border: '1px solid rgba(0,0,0,0.1)', background: '#FBFAF7', fontFamily: 'inherit', fontSize: 12, cursor: 'pointer' }}>
+          รีเซ็ตข้อมูลทั้งหมด
+        </button>
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>
