@@ -20,6 +20,51 @@ export const adminRouter = Router();
 adminRouter.use(requireAuth);
 adminRouter.use(verifyCsrf);
 
+// ── Current user ("me") ─────────────────────────────────────
+adminRouter.get('/me', async (req, res) => {
+  const me = await User.findById(req.user.id, {
+    loginId: 1, role: 1, mustChangePassword: 1,
+    lastLoginAt: 1, lastLoginIp: 1, createdAt: 1,
+  }).lean();
+  if (!me) return res.status(401).json({ error: 'unauthorized' });
+  res.json({
+    id: String(me._id),
+    loginId: me.loginId,
+    role: me.role,
+    mustChangePassword: !!me.mustChangePassword,
+    lastLoginAt: me.lastLoginAt,
+    lastLoginIp: me.lastLoginIp,
+    createdAt: me.createdAt,
+  });
+});
+
+// ── Dashboard summary ──────────────────────────────────────
+adminRouter.get('/stats', requireRole('admin', 'editor'), async (req, res) => {
+  const dayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+  const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+
+  const [userCount, activeUsers, clickToday, clickWeek, failedToday, cfg] = await Promise.all([
+    User.countDocuments({}),
+    User.countDocuments({ disabledAt: null }),
+    ClickEvent.countDocuments({ createdAt: { $gte: dayAgo } }),
+    ClickEvent.countDocuments({ createdAt: { $gte: weekAgo } }),
+    AuditLog.countDocuments({ action: { $in: ['login_fail', 'login_unknown', 'login_locked'] }, createdAt: { $gte: dayAgo } }),
+    getAppConfig(),
+  ]);
+
+  res.json({
+    users:    { total: userCount, active: activeUsers },
+    clicks:   { today: clickToday, week: clickWeek },
+    security: { failedLogins24h: failedToday },
+    config:   {
+      appName: cfg.appName,
+      buttons: cfg.buttons.length,
+      banners: cfg.banners.length,
+      updatedAt: cfg.updatedAt,
+    },
+  });
+});
+
 // ── Config read / write ─────────────────────────────────────
 adminRouter.get('/config', requireRole('admin', 'editor'), async (req, res) => {
   const cfg = await getAppConfig();
@@ -171,6 +216,16 @@ adminRouter.post('/users', adminWriteLimiter, requireRole('admin'), async (req, 
 
 const userIdParam = z.object({ id: z.string().regex(/^[0-9a-f]{24}$/i, 'invalid_id') });
 
+// Returns true if `userId` is the LAST active admin.
+async function isLastActiveAdmin(userId) {
+  const count = await User.countDocuments({
+    role: 'admin',
+    disabledAt: null,
+    _id: { $ne: userId },
+  });
+  return count === 0;
+}
+
 adminRouter.post('/users/:id/disable', requireRole('admin'), async (req, res) => {
   const p = userIdParam.safeParse(req.params);
   if (!p.success) return res.status(400).json({ error: 'invalid_id' });
@@ -178,6 +233,11 @@ adminRouter.post('/users/:id/disable', requireRole('admin'), async (req, res) =>
 
   const target = await User.findById(p.data.id);
   if (!target) return res.status(404).json({ error: 'not_found' });
+
+  // Never allow the last active admin to be disabled.
+  if (target.role === 'admin' && await isLastActiveAdmin(target._id)) {
+    return res.status(400).json({ error: 'last_admin' });
+  }
 
   target.disabledAt = new Date();
   target.disabledBy = req.user.id;
@@ -213,6 +273,83 @@ adminRouter.post('/users/:id/enable', requireRole('admin'), async (req, res) => 
     userAgent: safeText(req.get('user-agent') || '', 200),
   });
   res.json({ ok: true });
+});
+
+// ── Change role (admin ↔ editor) ───────────────────────────
+const roleBody = z.object({ role: z.enum(['admin', 'editor']) });
+
+adminRouter.patch('/users/:id/role', requireRole('admin'), async (req, res) => {
+  const p = userIdParam.safeParse(req.params);
+  if (!p.success) return res.status(400).json({ error: 'invalid_id' });
+  const b = roleBody.safeParse(req.body);
+  if (!b.success) return res.status(400).json({ error: 'invalid_input' });
+
+  const target = await User.findById(p.data.id);
+  if (!target) return res.status(404).json({ error: 'not_found' });
+
+  // Self-demotion guard — prevents the only admin from locking themselves out.
+  if (String(target._id) === req.user.id && b.data.role !== 'admin') {
+    return res.status(400).json({ error: 'self_demote_forbidden' });
+  }
+  // Never let the last admin be demoted.
+  if (target.role === 'admin' && b.data.role !== 'admin' && await isLastActiveAdmin(target._id)) {
+    return res.status(400).json({ error: 'last_admin' });
+  }
+
+  const before = target.role;
+  target.role = b.data.role;
+  await target.save();
+
+  // Bump tokenVersion so existing sessions re-fetch /me and pick up new role.
+  await User.findOneAndUpdate({ _id: target._id }, { $inc: { tokenVersion: 1 } });
+
+  await AuditLog.create({
+    actorId: req.user.id,
+    actorEmail: req.user.loginId,
+    action: 'user_role_change',
+    target: 'User:' + String(target._id),
+    ipHash: hashIp(req.ip),
+    userAgent: safeText(req.get('user-agent') || '', 200),
+    diff: { from: before, to: b.data.role },
+  });
+  res.json({ ok: true, role: target.role });
+});
+
+// ── Reset another user's password (admin only) ─────────────
+// Generates a random temp password, sets mustChangePassword=true, returns
+// the temp password ONCE in the response. Admin should share it out-of-band.
+adminRouter.post('/users/:id/reset-password', requireRole('admin'), async (req, res) => {
+  const p = userIdParam.safeParse(req.params);
+  if (!p.success) return res.status(400).json({ error: 'invalid_id' });
+  const target = await User.findById(p.data.id);
+  if (!target) return res.status(404).json({ error: 'not_found' });
+  if (target.disabledAt) return res.status(400).json({ error: 'user_disabled' });
+
+  // 14-char base62 temp password — short enough for humans to type.
+  const crypto = await import('node:crypto');
+  const alphabet = 'ABCDEFGHJKMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789';
+  let temp = '';
+  for (let i = 0; i < 14; i++) temp += alphabet[crypto.default.randomInt(0, alphabet.length)];
+
+  await target.setPasswordUnsafe(temp);   // temp bypasses policy; user must change on login
+  target.mustChangePassword = true;
+  target.failedLoginCount = 0;
+  target.lockUntil = null;
+  target.tokenVersion = (target.tokenVersion || 0) + 1;
+  await target.save();
+
+  // Revoke all active sessions of the target.
+  await revokeAllForUser(target._id, 'admin_reset_password');
+
+  await AuditLog.create({
+    actorId: req.user.id,
+    actorEmail: req.user.loginId,
+    action: 'password_reset',
+    target: 'User:' + String(target._id),
+    ipHash: hashIp(req.ip),
+    userAgent: safeText(req.get('user-agent') || '', 200),
+  });
+  res.json({ ok: true, tempPassword: temp });
 });
 
 // ── Revoke sessions ────────────────────────────────────────

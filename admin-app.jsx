@@ -2,7 +2,7 @@
 
 function AdminShell({ state, setState, onPreview, liveMode, authed, onLogout, me, onPasswordChanged }) {
   const mustChange = !!(me && me.mustChangePassword);
-  const [tab, setTab] = React.useState(mustChange ? 'security' : 'buttons');
+  const [tab, setTab] = React.useState(mustChange ? 'security' : (liveMode ? 'dashboard' : 'buttons'));
   const theme = THEMES[state.theme] || THEMES.cream;
 
   // If user MUST change password, lock them to the security tab until done.
@@ -17,6 +17,7 @@ function AdminShell({ state, setState, onPreview, liveMode, authed, onLogout, me
     { id: 'contact', label: 'ติดต่อแอดมิน', icon: 'chat' },
     { id: 'theme',   label: 'ธีม & แบรนด์', icon: 'settings' },
   ];
+  const dashboardTab = liveMode ? [{ id: 'dashboard', label: 'หน้าหลัก', icon: 'sparkle' }] : [];
   const adminOnlyTabs = liveMode ? [
     { id: 'security', label: 'ความปลอดภัย', icon: 'settings' },
     ...(isAdmin ? [
@@ -26,7 +27,7 @@ function AdminShell({ state, setState, onPreview, liveMode, authed, onLogout, me
   ] : [];
   const tabs = mustChange
     ? [{ id: 'security', label: 'เปลี่ยนรหัสผ่าน', icon: 'settings' }]
-    : [...baseTabs, ...adminOnlyTabs];
+    : [...dashboardTab, ...baseTabs, ...adminOnlyTabs];
 
   return (
     <div style={{
@@ -89,6 +90,7 @@ function AdminShell({ state, setState, onPreview, liveMode, authed, onLogout, me
 
       {/* main */}
       <main key={tab} className="ad-tab" style={{ overflow: 'auto', padding: '28px 36px' }}>
+        {tab === 'dashboard' && typeof DashboardTab === 'function' && <DashboardTab me={me} state={state}/>}
         {tab === 'buttons'  && <ButtonsEditor state={state} setState={setState}/>}
         {tab === 'banner'   && <BannerEditor state={state} setState={setState}/>}
         {tab === 'contact'  && <ContactEditor state={state} setState={setState}/>}

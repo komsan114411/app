@@ -123,9 +123,13 @@ const api = {
     if (opts.action) q.set('action', opts.action);
     return request('/api/admin/audit?' + q.toString(), { auth: true });
   },
+  async me()                     { return request('/api/admin/me', { auth: true }); },
+  async getStats()               { return request('/api/admin/stats', { auth: true }); },
   async listUsers()              { return request('/api/admin/users', { auth: true }); },
   async createUser(body)         { return request('/api/admin/users', { method: 'POST', body, auth: true }); },
   async userAction(id, action)   { return request(`/api/admin/users/${id}/${action}`, { method: 'POST', auth: true }); },
+  async changeRole(id, role)     { return request(`/api/admin/users/${id}/role`, { method: 'PATCH', body: { role }, auth: true }); },
+  async resetUserPassword(id)    { return request(`/api/admin/users/${id}/reset-password`, { method: 'POST', auth: true }); },
   async changePassword(currentPassword, newPassword) {
     return request('/api/admin/me/password', { method: 'POST', body: { currentPassword, newPassword }, auth: true });
   },

@@ -148,10 +148,12 @@ if ('serviceWorker' in navigator && location.protocol !== 'file:') {
 <script type="text/babel" src="icons.jsx"></script>
 <script type="text/babel" src="app-state.jsx"></script>
 <script type="text/babel" src="api-client.jsx"></script>
+<script type="text/babel" src="toast.jsx"></script>
 <script type="text/babel" src="ios-frame.jsx"></script>
 <script type="text/babel" src="browser-window.jsx"></script>
 <script type="text/babel" src="user-app.jsx"></script>
 <script type="text/babel" src="auth-gate.jsx"></script>
+<script type="text/babel" src="dashboard-tab.jsx"></script>
 <script type="text/babel" src="admin-tabs.jsx"></script>
 <script type="text/babel" src="admin-app.jsx"></script>
 <script type="text/babel" src="consent-banner.jsx"></script>
@@ -159,12 +161,60 @@ if ('serviceWorker' in navigator && location.protocol !== 'file:') {
 <script type="text/babel" data-presets="react">
 const { useState, useEffect, useMemo, useRef } = React;
 
+// ── Error boundary around the whole app ──
+class ErrorBoundary extends React.Component {
+  constructor(p) { super(p); this.state = { err: null }; }
+  static getDerivedStateFromError(err) { return { err }; }
+  componentDidCatch(err, info) { console.error('App crashed:', err, info); }
+  render() {
+    if (!this.state.err) return this.props.children;
+    return (
+      <div style={{ padding: 40, maxWidth: 560, margin: '60px auto', background: '#fff', borderRadius: 14, boxShadow: '0 20px 60px -20px rgba(0,0,0,0.15)' }}>
+        <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 10 }}>เกิดข้อผิดพลาดในหน้า</div>
+        <div style={{ fontSize: 13, color: '#6B6458', marginBottom: 14 }}>ลองรีโหลดหน้า · ถ้ายังไม่หายส่งข้อความนี้ให้ทีมพัฒนา</div>
+        <pre style={{ fontSize: 11, background: '#F3EFE7', padding: 12, borderRadius: 8, overflow: 'auto' }}>{String(this.state.err?.message || this.state.err)}</pre>
+        <button onClick={() => location.reload()} style={{ marginTop: 14, padding: '9px 18px', borderRadius: 8, border: 'none', background: '#1F1B17', color: '#fff', fontFamily: 'inherit', cursor: 'pointer' }}>รีโหลด</button>
+      </div>
+    );
+  }
+}
+
+// Idle auto-logout hook. Calls onTimeout after N ms of no user activity.
+function useIdleLogout(onTimeout, timeoutMs = 30 * 60_000, active = true) {
+  useEffect(() => {
+    if (!active) return;
+    let t;
+    const reset = () => { clearTimeout(t); t = setTimeout(onTimeout, timeoutMs); };
+    const events = ['mousedown', 'keydown', 'touchstart', 'scroll', 'visibilitychange'];
+    events.forEach(e => window.addEventListener(e, reset, { passive: true }));
+    reset();
+    return () => { clearTimeout(t); events.forEach(e => window.removeEventListener(e, reset)); };
+  }, [onTimeout, timeoutMs, active]);
+}
+
 function App() {
   const [state, setState] = useState(DEFAULT_STATE);
   const [liveMode, setLiveMode] = useState(false);
   const [authed, setAuthed] = useState(false);
-  const [me, setMe] = useState(null);       // { id, email, role }
+  const [me, setMe] = useState(null);
   const [bootError, setBootError] = useState(null);
+
+  // On boot in live mode, if refresh cookie is valid we'll be authed.
+  // Fetch /me to hydrate role + mustChangePassword after page reload.
+  useEffect(() => {
+    if (!liveMode || !authed) return;
+    (async () => {
+      try { const m = await api.me(); setMe(m); } catch {}
+    })();
+  }, [liveMode, authed]);
+
+  // Idle auto-logout — 30 min of no activity.
+  useIdleLogout(async () => {
+    if (!authed || !liveMode) return;
+    try { await api.logout(); } catch {}
+    setAuthed(false); setMe(null);
+    if (typeof toast !== 'undefined') toast.warn('ออกจากระบบอัตโนมัติ — ไม่มีการใช้งาน 30 นาที');
+  }, 30 * 60_000, liveMode && authed);
 
   useEffect(() => {
     (async () => {
@@ -420,7 +470,12 @@ function App() {
   );
 }
 
-ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+ReactDOM.createRoot(document.getElementById('root')).render(
+  <ErrorBoundary>
+    <App />
+    {typeof ToastContainer === 'function' && <ToastContainer/>}
+  </ErrorBoundary>
+);
 </script>
 </body>
 </html>

@@ -47,7 +47,7 @@ function ConsentBanner() {
           <button onClick={async () => {
             try { await api.forgetMe(); } catch {}
             set('denied');
-            window.alert('ลบข้อมูลการใช้งานที่เกี่ยวกับ IP ของคุณแล้ว');
+            if (typeof toast !== 'undefined') toast.success('ลบข้อมูลการใช้งานของคุณแล้ว');
           }} style={linkBtnWhite}>
             ลบข้อมูลการใช้งานที่ผ่านมา
           </button>

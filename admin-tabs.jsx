@@ -190,11 +190,41 @@ function UsersTab({ currentUserId }) {
   React.useEffect(() => { load(); }, [load]);
 
   const act = async (id, action) => {
-    if (!window.confirm(confirmText(action))) return;
+    const ok = await toast.confirm(confirmText(action), 'ยืนยัน', 'ยกเลิก', { tone: action === 'disable' ? 'danger' : 'default' });
+    if (!ok) return;
     try {
       await api.userAction(id, action);
+      toast.success('ดำเนินการสำเร็จ');
       await load();
-    } catch (e) { window.alert('ดำเนินการไม่สำเร็จ: ' + (e.message || 'unknown')); }
+    } catch (e) {
+      toast.error(friendlyUserActionError(e.message));
+    }
+  };
+
+  const changeRole = async (id, nextRole) => {
+    const ok = await toast.confirm(`เปลี่ยนสิทธิ์เป็น "${nextRole}"?`, 'ยืนยัน');
+    if (!ok) return;
+    try {
+      await api.changeRole(id, nextRole);
+      toast.success('เปลี่ยนสิทธิ์แล้ว');
+      await load();
+    } catch (e) { toast.error(friendlyUserActionError(e.message)); }
+  };
+
+  const resetPw = async (id, loginId) => {
+    const ok = await toast.confirm(
+      `รีเซ็ตรหัสของ "${loginId}"? ระบบจะสร้างรหัสชั่วคราวและบังคับเปลี่ยนตอนล็อกอินครั้งถัดไป`,
+      'รีเซ็ตรหัส', 'ยกเลิก', { tone: 'danger' }
+    );
+    if (!ok) return;
+    try {
+      const r = await api.resetUserPassword(id);
+      await toast.confirm(
+        `รหัสผ่านชั่วคราว: ${r.tempPassword}\n\nคัดลอกและส่งให้ ${loginId} ผ่านช่องทางที่ปลอดภัย · จะไม่แสดงอีก`,
+        'เข้าใจแล้ว · ปิด', '', { tone: 'default' }
+      );
+      await load();
+    } catch (e) { toast.error(friendlyUserActionError(e.message)); }
   };
 
   return (
@@ -238,7 +268,15 @@ function UsersTab({ currentUserId }) {
                     {u.lastLoginIp && <span> · จาก {u.lastLoginIp}</span>}
                   </div>
                 </div>
-                <div style={{ display: 'flex', gap: 6 }}>
+                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                  {!isSelf && (
+                    <button
+                      onClick={() => changeRole(u._id, u.role === 'admin' ? 'editor' : 'admin')}
+                      style={{ ...pillBtn, color: '#1F1B17' }}
+                      title={u.role === 'admin' ? 'ลดเป็น editor' : 'ยกเป็น admin'}
+                    >{u.role === 'admin' ? '→ editor' : '→ admin'}</button>
+                  )}
+                  <button onClick={() => resetPw(u._id, u.loginId)} style={{ ...pillBtn, color: '#7A5A10' }} title="ออกรหัสชั่วคราวแล้วบังคับเปลี่ยน">รีเซ็ตรหัส</button>
                   {disabled
                     ? <button onClick={() => act(u._id, 'enable')} style={{ ...pillBtn, color: '#058850' }}>เปิด</button>
                     : <button onClick={() => act(u._id, 'disable')} disabled={isSelf} style={{ ...pillBtn, color: '#B4463A', opacity: isSelf ? 0.3 : 1, cursor: isSelf ? 'not-allowed' : 'pointer' }}>ปิด</button>}
@@ -340,6 +378,18 @@ function AddAdminDialog({ onClose, onCreated }) {
   );
 }
 
+function friendlyUserActionError(code) {
+  switch (code) {
+    case 'self_disable_forbidden': return 'ปิดบัญชีตนเองไม่ได้';
+    case 'self_demote_forbidden':  return 'ลดสิทธิ์ตนเองไม่ได้';
+    case 'last_admin':             return 'ต้องมี admin อย่างน้อย 1 คน — สร้างคนใหม่ก่อน';
+    case 'user_disabled':          return 'บัญชีถูกปิดใช้งาน — เปิดก่อนจึงจะรีเซ็ตได้';
+    case 'forbidden':              return 'ไม่มีสิทธิ์';
+    case 'not_found':              return 'ไม่พบบัญชี';
+    default:                       return 'ดำเนินการไม่สำเร็จ';
+  }
+}
+
 function friendlyCreateError(code) {
   switch (code) {
     case 'login_id_taken': return 'Login ID นี้มีอยู่แล้ว';
@@ -382,8 +432,9 @@ function AuditTab() {
     '',
     'login_success', 'login_fail', 'login_locked', 'login_unknown', 'login_disabled',
     'config_update',
-    'password_change', 'password_change_fail',
-    'user_create', 'user_disable', 'user_enable', 'sessions_revoke',
+    'password_change', 'password_change_fail', 'password_reset',
+    'user_create', 'user_disable', 'user_enable', 'user_role_change',
+    'sessions_revoke',
   ];
 
   return (
