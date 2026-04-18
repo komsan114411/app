@@ -5,7 +5,13 @@
 //         we read it and echo in X-CSRF-Token header on mutations.
 // - Falls back to DEFAULT_STATE if API unreachable.
 
+// API_BASE:
+//   - Explicit:  <script>window.API_BASE='https://api.example.com'</script>
+//   - Implicit:  when we're on http(s) and none is set, use same origin ('').
+//                fetch('/api/...') resolves relative to the current page.
+//   - Demo:      only when neither is true (file:// direct), skip backend.
 const API_BASE = (typeof window !== 'undefined' && window.API_BASE) || '';
+const LIVE_POSSIBLE = typeof location !== 'undefined' && location.protocol !== 'file:';
 
 let accessToken = null;
 
@@ -128,13 +134,17 @@ const api = {
 };
 
 async function loadInitialState() {
-  if (!API_BASE) return { state: DEFAULT_STATE, live: false, authed: false };
+  if (!API_BASE && !LIVE_POSSIBLE) {
+    // file:// — can't reach a backend
+    return { state: DEFAULT_STATE, live: false, authed: false };
+  }
   try {
     const cfg = await api.getConfig();
     const merged = SafeState.sanitize({ ...DEFAULT_STATE, ...cfg }) || DEFAULT_STATE;
     const authed = await tryRefresh();
     return { state: merged, live: true, authed };
   } catch {
+    // Backend unreachable → demo mode
     return { state: DEFAULT_STATE, live: false, authed: false };
   }
 }

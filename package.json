@@ -1,0 +1,17 @@
+{
+  "name": "myapp-root",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Root package — delegates install/start to backend/",
+  "engines": {
+    "node": ">=20.10.0"
+  },
+  "scripts": {
+    "install:backend": "cd backend && npm install",
+    "postinstall": "cd backend && npm install --no-audit --no-fund",
+    "start": "cd backend && npm start",
+    "seed": "cd backend && npm run seed",
+    "seed:force": "cd backend && npm run seed -- --force-password",
+    "test": "cd backend && npm test"
+  }
+}
