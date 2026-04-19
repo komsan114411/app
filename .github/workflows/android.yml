@@ -72,7 +72,10 @@ jobs:
       - name: Prepare web assets with API_BASE
         working-directory: mobile
         env:
-          API_BASE: ${{ github.event.inputs.api_base }}
+          # Falls back to the Railway production URL so push-triggered
+          # builds aren't shipped in demo mode. Override via the workflow-
+          # dispatch input when pointing the APK at a staging backend.
+          API_BASE: ${{ github.event.inputs.api_base || 'https://app-production-a9d9.up.railway.app' }}
         run: node scripts/prepare-web.js
 
       - name: Sync Capacitor

@@ -144,10 +144,21 @@ function normalizeOrigin(s) {
 }
 const ALLOWED_ORIGINS_NORM = (env.CORS_ORIGINS || []).map(normalizeOrigin);
 
+// Capacitor WebViews use non-standard schemes that the browser's Origin
+// header reports as. These are trustworthy because no browser will ever
+// load them — only the APK/IPA we distribute does. Allowing them keeps
+// the mobile app from needing per-deploy CORS_ORIGINS tweaks.
+const CAPACITOR_ORIGINS = new Set([
+  'https://localhost',      // Capacitor Android with androidScheme=https
+  'capacitor://localhost',  // Capacitor iOS default
+  'ionic://localhost',      // Legacy Ionic/Capacitor
+]);
+
 const corsOpts = {
   origin(origin, cb) {
     if (!origin) return cb(null, true);
     const norm = normalizeOrigin(origin);
+    if (CAPACITOR_ORIGINS.has(norm)) return cb(null, true);
     if (ALLOWED_ORIGINS_NORM.includes(norm)) return cb(null, true);
     if (!corsRejectWarned) {
       corsRejectWarned = true;
