@@ -3,6 +3,20 @@
 const API_BASE = (typeof window !== 'undefined' && window.API_BASE) || '';
 const LIVE_POSSIBLE = typeof location !== 'undefined' && location.protocol !== 'file:';
 
+// Rewrites a relative /media/* or /uploads/* URL to an absolute URL on the
+// API origin. In the web deploy API_BASE is empty and the browser resolves
+// /media/xxx.png against the current origin — works fine. Inside the
+// Capacitor APK, the WebView origin is https://localhost and /media/xxx.png
+// would 404 locally; we need https://app-production-a9d9.up.railway.app/media/xxx.png
+// instead. This helper is safe to call on absolute URLs (returned unchanged)
+// and on empty values (returned empty).
+function absolutizeMedia(u) {
+  if (!u || typeof u !== 'string') return '';
+  if (/^(https?:|data:|blob:)/i.test(u)) return u;
+  if (u.startsWith('/') && API_BASE) return API_BASE + u;
+  return u;
+}
+
 let accessToken = null;
 
 function readCsrf() {
@@ -187,4 +201,4 @@ async function loadInitialState() {
   }
 }
 
-Object.assign(window, { api, loadInitialState, readCookie });
+Object.assign(window, { api, loadInitialState, readCookie, absolutizeMedia });

@@ -263,7 +263,7 @@ adminRouter.patch('/config', adminWriteLimiter, requireRole('admin', 'editor'), 
   const cfg = await getAppConfig();
   const before = cfg.toObject();
   Object.assign(cfg, {
-    appName: clean.appName, tagline: clean.tagline, theme: clean.theme,
+    appName: clean.appName, tagline: clean.tagline, appIcon: clean.appIcon, theme: clean.theme,
     language: clean.language, darkMode: clean.darkMode,
     featureFlags: clean.featureFlags,
     downloadLinks: clean.downloadLinks,

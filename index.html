@@ -733,12 +733,16 @@ function UserOnlyPage() {
 
 // Reflects admin-edited appName / appIcon in <title>, favicon, apple-touch-icon.
 // Falls back to sensible defaults when either field is empty.
+// absolutizeMedia() prepends API_BASE for relative /media/* URLs so the
+// APK (WebView origin = https://localhost) loads icons from the real
+// backend, not from the empty local bundle.
 function useDocumentIdentity(appName, appIcon) {
   useEffect(() => {
     if (appName) document.title = appName;
     const fav = document.getElementById('__favicon');
     const ati = document.getElementById('__appletouchicon');
-    const src = appIcon || 'icon-192.png';
+    const raw = appIcon || 'icon-192.png';
+    const src = (typeof absolutizeMedia === 'function') ? absolutizeMedia(raw) : raw;
     if (fav && fav.getAttribute('href') !== src) fav.setAttribute('href', src);
     if (ati && ati.getAttribute('href') !== src) ati.setAttribute('href', src);
   }, [appName, appIcon]);

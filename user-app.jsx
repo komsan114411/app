@@ -19,7 +19,7 @@ function BannerCard({ banner, theme, idx }) {
         cursor: clickable ? 'pointer' : 'default',
     }}>
       {hasImage && (
-        <img src={banner.imageUrl} alt="" style={{
+        <img src={typeof absolutizeMedia === 'function' ? absolutizeMedia(banner.imageUrl) : banner.imageUrl} alt="" style={{
           position: 'absolute', inset: 0, width: '100%', height: '100%',
           objectFit: 'cover', opacity: 0.88,
         }}/>
@@ -279,7 +279,8 @@ function UserApp({ state, pageKey, onButtonPress, fullscreen = false }) {
 
   const pageUrl = typeof location !== 'undefined' ? location.origin + location.pathname : '';
 
-  const iconSrc = (typeof safeUrl === 'function' && state.appIcon) ? safeUrl(state.appIcon) : state.appIcon;
+  const rawIcon = (typeof safeUrl === 'function' && state.appIcon) ? safeUrl(state.appIcon) : state.appIcon;
+  const iconSrc = (typeof absolutizeMedia === 'function') ? absolutizeMedia(rawIcon) : rawIcon;
 
   return (
     <div key={pageKey} style={{

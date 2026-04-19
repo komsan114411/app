@@ -98,7 +98,7 @@ function InstallPage() {
                 fontSize: 28, fontWeight: 700, flexShrink: 0, overflow: 'hidden',
               }}>
                 {cfg?.appIcon
-                  ? <img src={cfg.appIcon} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }}/>
+                  ? <img src={typeof absolutizeMedia === 'function' ? absolutizeMedia(cfg.appIcon) : cfg.appIcon} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }}/>
                   : appName.slice(0, 1).toUpperCase()}
               </div>
               <div style={{ minWidth: 0, flex: 1 }}>
