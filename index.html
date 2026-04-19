@@ -161,6 +161,7 @@ if ('serviceWorker' in navigator && location.protocol !== 'file:') {
 <script type="text/babel" src="ios-frame.jsx"></script>
 <script type="text/babel" src="browser-window.jsx"></script>
 <script type="text/babel" src="download-links.jsx"></script>
+<script type="text/babel" src="install-page.jsx"></script>
 <script type="text/babel" src="user-app.jsx"></script>
 <script type="text/babel" src="auth-gate.jsx"></script>
 <script type="text/babel" src="twofa-setup.jsx"></script>
@@ -516,13 +517,33 @@ function App() {
   );
 }
 
-ReactDOM.createRoot(document.getElementById('root')).render(
-  <ErrorBoundary>
-    <App />
-    {typeof ToastContainer === 'function' && <ToastContainer/>}
-    {typeof OnlineIndicator === 'function' && <OnlineIndicator/>}
-  </ErrorBoundary>
-);
+// Standalone install landing page at /install — admin shares this URL
+// with end-users who need to install the Android app. Skips the full
+// SPA (no toolbar, no dual view) and renders a dedicated dashboard.
+function Root() {
+  const path = (typeof location !== 'undefined' ? location.pathname : '/').replace(/\/+$/, '') || '/';
+  const qs = (typeof location !== 'undefined' ? new URLSearchParams(location.search) : null);
+  const installMode = path === '/install' || path === '/download' || (qs && qs.get('page') === 'install');
+
+  if (installMode && typeof InstallPage === 'function') {
+    return (
+      <ErrorBoundary>
+        <InstallPage/>
+        {typeof ToastContainer === 'function' && <ToastContainer/>}
+        {typeof OnlineIndicator === 'function' && <OnlineIndicator/>}
+      </ErrorBoundary>
+    );
+  }
+  return (
+    <ErrorBoundary>
+      <App />
+      {typeof ToastContainer === 'function' && <ToastContainer/>}
+      {typeof OnlineIndicator === 'function' && <OnlineIndicator/>}
+    </ErrorBoundary>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<Root/>);
 </script>
 </body>
 </html>
