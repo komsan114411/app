@@ -811,11 +811,18 @@ function DownloadLinksEditor({ state, setState }) {
         sub="วาง URL ไปยัง APK / Play Store / App Store · หน้าผู้ใช้จะเห็นปุ่มดาวน์โหลดอัตโนมัติ"
       />
 
+      {/* Source #1: direct APK upload — self-hosted, no external service */}
+      <ApkUploader currentUrl={dl.android} onUploaded={(url, filename) => {
+        patch({ android: url, androidLabel: dl.androidLabel || ('ดาวน์โหลด ' + filename) });
+        toast.success('อัปโหลด APK สำเร็จ — ลิงก์ตั้งค่าให้แล้ว');
+      }}/>
+
+      {/* Source #2: GitHub Release auto-fill */}
       <Card style={{ marginBottom: 14, background: '#F3EFE7' }}>
-        <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 6 }}>⚡ Auto-fill จาก GitHub</div>
+        <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 6 }}>⚡ หรือ Auto-fill จาก GitHub Release</div>
         <div style={{ fontSize: 11, color: '#6B6458', marginBottom: 10, lineHeight: 1.5 }}>
           CI workflow <code>.github/workflows/android.yml</code> build APK อัตโนมัติทุก push ไป main แล้วเผยแพร่เป็น <code>latest-apk</code> release.
-          ใส่ <code>owner/repo</code> แล้วกด Auto-fill เพื่อให้ลิงก์ Android ชี้ไปที่ APK ล่าสุด
+          ใส่ <code>owner/repo</code> แล้วกด Auto-fill เพื่อให้ลิงก์ Android ชี้ไปที่ APK ล่าสุด (อัปเดตเองเมื่อ push)
         </div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           <input type="text" value={repo} onChange={e => setRepo(e.target.value.slice(0, 100))}
@@ -828,6 +835,17 @@ function DownloadLinksEditor({ state, setState }) {
           }}>Auto-fill Android</button>
         </div>
       </Card>
+
+      {/* Source #3: anything else — Drive/Dropbox/R2 — just paste into the URL field below */}
+      <div style={{
+        marginBottom: 14, padding: '10px 14px', borderRadius: 10,
+        background: 'rgba(0,0,0,0.03)', fontSize: 11, color: '#6B6458', lineHeight: 1.6,
+      }}>
+        <strong>📌 หรือใช้ที่อื่นก็ได้</strong> — วาง URL ของ Google Drive / Dropbox / Cloudflare R2 / S3 / web host ของคุณลงในช่อง "URL (APK)" ด้านล่างได้เลย
+        · ถ้าเป็น Drive/Dropbox ต้องเป็น direct-download link (ไม่ใช่ preview page)
+        <br/>
+        <span style={{ opacity: 0.8 }}>เคล็ดลับ Drive: ใช้ <code>https://drive.google.com/uc?export=download&id=FILE_ID</code></span>
+      </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 16 }}>
         <Card>
@@ -910,7 +928,140 @@ function DownloadLinksEditor({ state, setState }) {
   );
 }
 
+// ─── ApkUploader: direct APK upload (self-hosted, no GitHub needed) ───
+// Admin drags or picks an .apk file; it's stored in MongoDB (≤ 15 MiB)
+// and served from /media/<id>.apk with Content-Disposition so Android
+// Chrome shows a download prompt → tap → install.
+function ApkUploader({ currentUrl, onUploaded }) {
+  const [busy, setBusy] = React.useState(false);
+  const [list, setList] = React.useState(null);
+  const [error, setError] = React.useState(null);
+  const fileRef = React.useRef(null);
+
+  const load = React.useCallback(async () => {
+    try { const r = await api.listApks(); setList(r.rows || []); } catch { setList([]); }
+  }, []);
+  React.useEffect(() => { load(); }, [load]);
+
+  const pick = () => fileRef.current?.click();
+
+  const upload = async (file) => {
+    if (!file) return;
+    if (!/\.apk$/i.test(file.name)) { setError('ไฟล์ต้องเป็น .apk เท่านั้น'); return; }
+    if (file.size > 15 * 1024 * 1024) { setError('ไฟล์ใหญ่เกิน 15 MB · ใช้ GitHub Release หรือ Google Drive แทน'); return; }
+    setError(null); setBusy(true);
+    try {
+      const r = await api.uploadApk(file);
+      onUploaded?.(r.url, r.filename);
+      await load();
+    } catch (e) {
+      if (e.message === 'file_too_large')       setError('ไฟล์ใหญ่เกิน 15 MB');
+      else if (e.message === 'unsupported_media_type') setError('ชนิดไฟล์ไม่รองรับ — ต้องเป็น .apk');
+      else if (e.message === 'not_an_apk')      setError('ไฟล์ไม่ใช่ APK ที่ถูกต้อง (ตรวจ ZIP signature ล้มเหลว)');
+      else if (e.message === 'forbidden')       setError('ต้องเป็น role admin');
+      else                                       setError('อัปโหลดไม่สำเร็จ: ' + (e.message || ''));
+    } finally {
+      setBusy(false);
+      if (fileRef.current) fileRef.current.value = '';
+    }
+  };
+
+  const onDrop = (e) => { e.preventDefault(); upload(e.dataTransfer?.files?.[0]); };
+  const onDrag = (e) => e.preventDefault();
+
+  const pickExisting = (url, filename) => {
+    onUploaded?.(url, filename || 'app.apk');
+    toast.success('เลือก APK เดิมแล้ว');
+  };
+
+  const remove = async (id) => {
+    try { await api.deleteApk(id); toast.success('ลบแล้ว'); load(); }
+    catch (e) { toast.error('ลบไม่สำเร็จ: ' + (e.message || '')); }
+  };
+
+  const fmtSize = (n) => n > 1024*1024 ? (n/1024/1024).toFixed(1) + ' MB' : (n/1024).toFixed(0) + ' KB';
+  const currentFilename = currentUrl?.match(/([a-f0-9]{12,64}\.apk)(?:\?|$)/i)?.[1];
+
+  return (
+    <Card style={{ marginBottom: 14, border: '2px dashed rgba(6,199,85,0.3)', background: 'rgba(6,199,85,0.04)' }}>
+      <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 6 }}>📦 อัปโหลดไฟล์ APK โดยตรง (แนะนำ · ไม่ต้องใช้บริการอื่น)</div>
+      <div style={{ fontSize: 11, color: '#6B6458', marginBottom: 12, lineHeight: 1.55 }}>
+        ไฟล์เก็บบนเซิร์ฟเวอร์ของเราเอง (MongoDB) · รองรับสูงสุด 15 MB · ผู้ใช้กด "ดาวน์โหลด APK" → Android ดาวน์โหลด → แตะติดตั้งได้เลย
+      </div>
+
+      <div
+        onDrop={onDrop} onDragOver={onDrag} onDragEnter={onDrag}
+        onClick={pick}
+        style={{
+          padding: '18px', borderRadius: 10, border: '1px dashed rgba(0,0,0,0.2)',
+          background: '#fff', textAlign: 'center', cursor: busy ? 'wait' : 'pointer',
+          opacity: busy ? 0.6 : 1, transition: 'all 160ms',
+        }}>
+        <div style={{ fontSize: 28, marginBottom: 4 }}>📱</div>
+        <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>
+          {busy ? 'กำลังอัปโหลด…' : 'ลากไฟล์ .apk มาวาง หรือคลิกเพื่อเลือก'}
+        </div>
+        <div style={{ fontSize: 11, color: '#8F877C' }}>ขนาดสูงสุด 15 MB</div>
+        <input ref={fileRef} type="file" accept=".apk,application/vnd.android.package-archive"
+          style={{ display: 'none' }}
+          onChange={e => upload(e.target.files?.[0])}/>
+      </div>
+
+      {error && (
+        <div style={{ marginTop: 10, padding: '8px 12px', borderRadius: 8, background: 'rgba(180,70,58,0.08)', color: '#B4463A', fontSize: 12 }}>
+          {error}
+        </div>
+      )}
+
+      {list && list.length > 0 && (
+        <div style={{ marginTop: 14 }}>
+          <div style={{ fontSize: 11, fontWeight: 600, color: '#6B6458', marginBottom: 6 }}>ไฟล์ APK ที่อัปโหลดไว้</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {list.map(r => {
+              const id = r.url.replace('/media/', '');
+              const inUse = currentFilename === id;
+              return (
+                <div key={r.url} style={{
+                  display: 'flex', gap: 8, alignItems: 'center',
+                  padding: '8px 10px', borderRadius: 8, background: '#fff',
+                  border: '1px solid ' + (inUse ? '#058850' : 'rgba(0,0,0,0.06)'),
+                }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 12, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      {r.filename || 'app.apk'}
+                      {inUse && <span style={{ marginLeft: 6, color: '#058850', fontSize: 10 }}>● ใช้อยู่</span>}
+                    </div>
+                    <div style={{ fontSize: 10, color: '#8F877C' }}>
+                      {fmtSize(r.size)} · {new Date(r.uploadedAt).toLocaleString('th-TH')}
+                    </div>
+                  </div>
+                  {!inUse && (
+                    <button onClick={() => pickExisting(r.url, r.filename)} style={{
+                      padding: '5px 10px', borderRadius: 7, border: '1px solid rgba(0,0,0,0.12)',
+                      background: '#fff', fontSize: 11, cursor: 'pointer', fontFamily: 'inherit',
+                    }}>เลือก</button>
+                  )}
+                  <a href={r.url} target="_blank" rel="noopener" style={{
+                    padding: '5px 10px', borderRadius: 7, border: '1px solid rgba(0,0,0,0.12)',
+                    background: '#fff', fontSize: 11, cursor: 'pointer', fontFamily: 'inherit',
+                    textDecoration: 'none', color: '#1F1B17',
+                  }}>ทดสอบ</a>
+                  <button onClick={() => remove(id)} style={{
+                    padding: '5px 10px', borderRadius: 7, border: '1px solid rgba(180,70,58,0.3)',
+                    background: '#fff', color: '#B4463A', fontSize: 11, cursor: 'pointer', fontFamily: 'inherit',
+                  }}>ลบ</button>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </Card>
+  );
+}
+
 window.DownloadLinksEditor = DownloadLinksEditor;
+window.ApkUploader = ApkUploader;
 
 function friendlyCreateError(code) {
   switch (code) {

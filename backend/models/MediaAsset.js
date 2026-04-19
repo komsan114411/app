@@ -14,7 +14,9 @@ const MediaAssetSchema = new mongoose.Schema({
   // browser can infer Content-Type even before it reaches our handler.
   _id:        { type: String, required: true, maxlength: 128 },
   mime:       { type: String, required: true, maxlength: 64 },
-  size:       { type: Number, required: true, min: 0, max: 10 * 1024 * 1024 },
+  size:       { type: Number, required: true, min: 0, max: 60 * 1024 * 1024 }, // bumped for APKs
+  filename:   { type: String, default: '', maxlength: 120 },
+  kind:       { type: String, enum: ['image', 'apk', 'other'], default: 'image' },
   data:       { type: Buffer, required: true },
   uploadedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
 }, { timestamps: true });

@@ -226,18 +226,26 @@ app.use('/api/admin',     adminRouter);
 // Filename pattern (hex.ext) guards against path-traversal; the MediaAsset
 // collection also validates ext on insert so the browser Content-Type can
 // be trusted. Headers harden the response against sniffing / embedding.
-const MEDIA_ID_RE = /^[a-f0-9]{12,64}\.(jpg|jpeg|png|webp|gif)$/i;
+const MEDIA_ID_RE = /^[a-f0-9]{12,64}\.(jpg|jpeg|png|webp|gif|apk)$/i;
 app.get('/media/:id', async (req, res) => {
   const id = String(req.params.id || '');
   if (!MEDIA_ID_RE.test(id)) return res.status(400).json({ error: 'invalid_id' });
   const asset = await MediaAsset.findById(id).lean();
   if (!asset || !asset.data) return res.status(404).json({ error: 'not_found' });
+  const isApk = /\.apk$/i.test(id);
   res.setHeader('Content-Type', asset.mime);
   res.setHeader('Content-Length', String(asset.size || asset.data.length));
   res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
   res.setHeader('X-Content-Type-Options', 'nosniff');
-  res.setHeader('Content-Security-Policy', "default-src 'none'; img-src 'self'; sandbox");
   res.setHeader('Cross-Origin-Resource-Policy', 'same-site');
+  if (isApk) {
+    // Force download prompt on Android + give a nice filename
+    const filename = asset.filename || 'app.apk';
+    res.setHeader('Content-Disposition', `attachment; filename="${filename.replace(/[^\w.-]/g, '_')}"`);
+    res.setHeader('Accept-Ranges', 'bytes');
+  } else {
+    res.setHeader('Content-Security-Policy', "default-src 'none'; img-src 'self'; sandbox");
+  }
   res.send(Buffer.isBuffer(asset.data) ? asset.data : Buffer.from(asset.data.buffer || asset.data));
 });
 

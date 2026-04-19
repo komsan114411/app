@@ -14,7 +14,7 @@ import { requireAuth, requireRole } from '../middleware/auth.js';
 import { verifyCsrf } from '../middleware/csrf.js';
 import { adminWriteLimiter, uploadLimiter } from '../middleware/rateLimit.js';
 import { validate, configBody, createUserBody } from '../middleware/validate.js';
-import { uploadSingle, MIME_TO_EXT } from '../middleware/upload.js';
+import { uploadSingle, uploadApk, isApkBuffer, MIME_TO_EXT, APK_MIME } from '../middleware/upload.js';
 import { MediaAsset } from '../models/MediaAsset.js';
 import { sanitizeConfig, hashIp, safeText, safeUrl } from '../utils/sanitize.js';
 import { revokeAllForUser, revokeOne } from '../utils/tokens.js';
@@ -329,6 +329,78 @@ adminRouter.post('/upload/banner', uploadLimiter, requireRole('admin', 'editor')
     ipHash: hashIp(req.ip), userAgent: safeText(req.get('user-agent') || '', 200),
   });
   res.json({ ok: true, url, size: req.file.size });
+});
+
+// ── APK upload (self-hosted Android distribution) ──────────
+// Admin can upload an .apk directly without depending on GitHub Releases,
+// Google Drive, or object storage. File is stored in MongoDB MediaAsset
+// and served via /media/<id>.apk with Content-Disposition: attachment, so
+// Android Chrome triggers a download prompt and the user can tap-install.
+function runApkUpload(req, res) {
+  return new Promise((resolve, reject) => {
+    uploadApk(req, res, (err) => err ? reject(err) : resolve());
+  });
+}
+
+adminRouter.post('/upload/apk', uploadLimiter, requireRole('admin'), async (req, res) => {
+  try { await runApkUpload(req, res); }
+  catch (err) {
+    if (err && err.code === 'LIMIT_FILE_SIZE') return res.status(413).json({ error: 'file_too_large' });
+    if (err && err.message === 'unsupported_media_type') return res.status(415).json({ error: 'unsupported_media_type' });
+    log.warn({ err: err?.message }, 'apk_upload_multer_failed');
+    return res.status(400).json({ error: 'upload_failed' });
+  }
+  if (!req.file) return res.status(400).json({ error: 'no_file' });
+  // Verify real APK bytes — MIME is client-supplied and untrustworthy.
+  if (!isApkBuffer(req.file.buffer)) return res.status(415).json({ error: 'not_an_apk' });
+
+  const id = crypto.randomBytes(12).toString('hex') + '.apk';
+  const origName = safeText(req.file.originalname || 'app.apk', 120);
+  try {
+    await MediaAsset.create({
+      _id: id, mime: APK_MIME, size: req.file.size,
+      filename: origName, kind: 'apk',
+      data: req.file.buffer, uploadedBy: req.user.id,
+    });
+  } catch (err) {
+    log.error({ err: err?.message, size: req.file.size }, 'apk_persist_failed');
+    return res.status(500).json({ error: 'upload_failed' });
+  }
+
+  const url = '/media/' + id;
+  await AuditLog.create({
+    actorId: req.user.id, actorEmail: req.user.loginId,
+    action: 'apk_upload', target: url,
+    ipHash: hashIp(req.ip), userAgent: safeText(req.get('user-agent') || '', 200),
+    diff: { filename: origName, size: req.file.size },
+  });
+  res.json({ ok: true, url, size: req.file.size, filename: origName });
+});
+
+// List recent APK uploads so the admin can reuse / rotate old versions.
+adminRouter.get('/uploads/apks', requireRole('admin'), async (req, res) => {
+  const rows = await MediaAsset.find({ kind: 'apk' }, { data: 0 })
+    .sort({ createdAt: -1 }).limit(20).lean();
+  res.json({
+    rows: rows.map(r => ({
+      url: '/media/' + r._id,
+      filename: r.filename,
+      size: r.size,
+      uploadedAt: r.createdAt,
+    })),
+  });
+});
+
+adminRouter.delete('/uploads/apks/:id', requireRole('admin'), async (req, res) => {
+  const id = String(req.params.id || '');
+  if (!/^[a-f0-9]{12,64}\.apk$/i.test(id)) return res.status(400).json({ error: 'invalid_id' });
+  await MediaAsset.deleteOne({ _id: id });
+  await AuditLog.create({
+    actorId: req.user.id, actorEmail: req.user.loginId,
+    action: 'apk_delete', target: '/media/' + id,
+    ipHash: hashIp(req.ip), userAgent: safeText(req.get('user-agent') || '', 200),
+  });
+  res.json({ ok: true });
 });
 
 // ── Analytics (detailed per-button) ─────────────────────────

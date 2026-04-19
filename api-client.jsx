@@ -113,6 +113,12 @@ const api = {
     const fd = new FormData(); fd.append('file', file);
     return request('/api/admin/upload/banner', { method: 'POST', body: fd, auth: true });
   },
+  async uploadApk(file) {
+    const fd = new FormData(); fd.append('file', file);
+    return request('/api/admin/upload/apk', { method: 'POST', body: fd, auth: true });
+  },
+  async listApks()            { return request('/api/admin/uploads/apks', { auth: true }); },
+  async deleteApk(id)         { return request(`/api/admin/uploads/apks/${encodeURIComponent(id)}`, { method: 'DELETE', auth: true }); },
   async getAnalytics()             { return request('/api/admin/analytics', { auth: true }); },
   async getButtonAnalytics(id)     { return request(`/api/admin/analytics/button/${encodeURIComponent(id)}`, { auth: true }); },
   async getAudit(opts = {}) {
