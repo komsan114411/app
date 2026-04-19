@@ -387,15 +387,17 @@ function App({ adminUnlocked = false } = {}) {
         if (typeof SavedStore !== 'undefined') SavedStore.setStatus('error');
         const msg = (err && err.message) || 'unknown';
         try { console.error('[save] PATCH /api/admin/config failed:', msg, err?.responseBody); } catch {}
-        // Session expired → kick admin back to login instead of showing a
-        // cryptic "unauthorized" toast over and over. log.md from a live
-        // session showed the admin sitting on the Theme tab hitting save
-        // repeatedly while every PATCH came back 401; they had no idea
-        // their refresh token had rotated out from under them.
         if (err?.status === 401 || msg === 'unauthorized' || msg === 'no_refresh' || msg === 'invalid_refresh') {
           setAuthed(false);
           try { await api.logout(); } catch {}
           if (typeof toast !== 'undefined') toast.error('เซสชันหมดอายุ — กรุณาเข้าสู่ระบบใหม่');
+        } else if (msg === 'invalid_input' && err.responseBody?.issues?.length) {
+          // Surface zod validation failures so the admin (or me, reading
+          // DevTools) can see WHICH field was rejected — otherwise
+          // "บันทึกไม่สำเร็จ: invalid_input" is unactionable. Happened
+          // when configBody schema lagged behind client state.
+          const fields = err.responseBody.issues.map(i => i.path || '?').join(', ');
+          if (typeof toast !== 'undefined') toast.error('บันทึกไม่สำเร็จ — ฟิลด์ไม่ถูกต้อง: ' + fields);
         } else {
           if (typeof toast !== 'undefined') toast.error('บันทึกไม่สำเร็จ: ' + msg);
         }

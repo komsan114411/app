@@ -27,6 +27,7 @@ export const trackBody = z.object({
 export const configBody = z.object({
   appName: z.string().max(120).optional(),
   tagline: z.string().max(200).optional(),
+  appIcon: z.string().max(512).optional().or(z.literal('')),
   theme: z.enum(['cream','sage','midnight','sunset']).optional(),
   language: z.string().max(8).optional(),
   darkMode: z.enum(['auto','light','dark']).optional(),
