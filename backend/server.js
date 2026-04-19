@@ -15,6 +15,8 @@ import { fileURLToPath } from 'node:url';
 import { env } from './config/env.js';
 import { connectDB, disconnectDB } from './db.js';
 import { log } from './utils/logger.js';
+import { User } from './models/User.js';
+import { getAppConfig } from './models/AppConfig.js';
 
 // ── Startup feature warnings ────────────────────────────────
 // Surface missing-but-impactful config at boot time so operators notice in
@@ -270,8 +272,30 @@ app.use((err, req, res, _next) => {
 export { app };
 
 // ── Boot ────────────────────────────────────────────────────
+// On first boot in a clean DB, auto-provision the AppConfig singleton and a
+// first admin account so the operator doesn't need a shell to run the seed
+// script. Idempotent: runs only when there's no admin yet. The admin is
+// created with mustChangePassword=true so the default credentials force a
+// reset on first login.
+async function ensureBootstrapped() {
+  try { await getAppConfig(); } catch (e) { log.error({ err: e.message }, 'bootstrap_config_failed'); }
+  try {
+    const adminCount = await User.countDocuments({ role: 'admin' });
+    if (adminCount > 0) return;
+    const loginId = (env.ADMIN_LOGIN_ID || 'admin123').toLowerCase();
+    const password = env.ADMIN_PASSWORD || 'admin123';
+    const u = new User({ loginId, role: 'admin', mustChangePassword: true });
+    await u.setPasswordUnsafe(password);
+    await u.save();
+    log.warn({ loginId }, '🔐 auto-seeded first admin — MUST change the default password on first login');
+  } catch (e) {
+    log.error({ err: e.message }, 'bootstrap_admin_failed');
+  }
+}
+
 export async function boot() {
   await connectDB();
+  await ensureBootstrapped();
   const server = app.listen(env.PORT, () => {
     log.info({ port: env.PORT, env: env.NODE_ENV }, 'server_listening');
   });
