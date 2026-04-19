@@ -204,16 +204,28 @@ function UsersTab({ currentUserId }) {
     if (!ok) return;
     try {
       await api.userAction(id, action);
-      toast.success('ดำเนินการสำเร็จ');
+      toast.success(action === 'revoke-sessions' ? 'เตะออกทุกเซสชันแล้ว'
+                   : action === 'disable' ? 'ปิดบัญชีแล้ว'
+                   : action === 'enable'  ? 'เปิดบัญชีแล้ว'
+                   : 'ดำเนินการสำเร็จ');
       await load();
-    } catch (e) { toast.error(friendlyUserActionError(e.message)); }
+    } catch (e) {
+      if (typeof console !== 'undefined') console.error('[admin-action]', action, id, e.message);
+      toast.error(friendlyUserActionError(e.message) + ' · ' + e.message);
+    }
   };
 
   const changeRole = async (id, nextRole) => {
     const ok = await toast.confirm(`เปลี่ยนสิทธิ์เป็น "${nextRole}"?`, 'ยืนยัน');
     if (!ok) return;
-    try { await api.changeRole(id, nextRole); toast.success('เปลี่ยนสิทธิ์แล้ว'); await load(); }
-    catch (e) { toast.error(friendlyUserActionError(e.message)); }
+    try {
+      await api.changeRole(id, nextRole);
+      toast.success('เปลี่ยนสิทธิ์เป็น ' + nextRole + ' แล้ว');
+      await load();
+    } catch (e) {
+      if (typeof console !== 'undefined') console.error('[admin-changeRole]', id, nextRole, e.message);
+      toast.error(friendlyUserActionError(e.message) + ' · ' + e.message);
+    }
   };
 
   const resetPw = async (id, loginId) => {
@@ -224,16 +236,23 @@ function UsersTab({ currentUserId }) {
     if (!ok) return;
     try {
       const r = await api.resetUserPassword(id);
-      await toast.confirm(
-        `รหัสผ่านชั่วคราว:\n\n${r.tempPassword}\n\nคัดลอกและส่งให้ ${loginId} · ไม่แสดงอีก`,
-        'เข้าใจแล้ว · ปิด', 'คัดลอก', { tone: 'default' }
-      ).then((closedOk) => {
-        if (!closedOk) {
-          try { navigator.clipboard.writeText(r.tempPassword); toast.success('คัดลอกแล้ว'); } catch {}
-        }
-      });
+      const tempPw = (r && r.tempPassword) || '';
+      // Show the temp password in a confirm dialog so admin can copy it.
+      // "OK" closes the dialog without copying, "Cancel" copies instead
+      // (dialog convention here flips the primary action label).
+      const closedOk = await toast.confirm(
+        `รหัสผ่านชั่วคราวของ ${loginId}:\n\n${tempPw}\n\nคัดลอกและส่งให้ผู้ใช้ · ไม่แสดงซ้ำ`,
+        'ปิด', 'คัดลอกลง clipboard', { tone: 'default' }
+      );
+      if (!closedOk) {
+        try { await navigator.clipboard.writeText(tempPw); toast.success('คัดลอกรหัสชั่วคราวแล้ว'); }
+        catch { toast.error('คัดลอกไม่สำเร็จ — กด Ctrl+C เอง'); }
+      }
       await load();
-    } catch (e) { toast.error(friendlyUserActionError(e.message)); }
+    } catch (e) {
+      if (typeof console !== 'undefined') console.error('[admin-resetPw]', id, e.message);
+      toast.error(friendlyUserActionError(e.message) + ' · ' + e.message);
+    }
   };
 
   return (
@@ -298,11 +317,17 @@ function UsersTab({ currentUserId }) {
                       {u.role === 'admin' ? '→ editor' : '→ admin'}
                     </button>
                   )}
-                  <button onClick={() => resetPw(u._id, u.loginId)} style={{ ...pillBtn, color: '#7A5A10' }}>รีเซ็ตรหัส</button>
+                  <button onClick={() => resetPw(u._id, u.loginId)}
+                    title={isSelf ? 'รีเซ็ตรหัสตัวเอง: แนะนำใช้แท็บ "ความปลอดภัย" แทน' : 'สร้างรหัสชั่วคราว'}
+                    style={{ ...pillBtn, color: '#7A5A10' }}>รีเซ็ตรหัส</button>
                   {disabled
                     ? <button onClick={() => act(u._id, 'enable')} style={{ ...pillBtn, color: '#058850' }}>เปิด</button>
-                    : <button onClick={() => act(u._id, 'disable')} disabled={isSelf} style={{ ...pillBtn, color: '#B4463A', opacity: isSelf ? 0.3 : 1, cursor: isSelf ? 'not-allowed' : 'pointer' }}>ปิด</button>}
-                  <button onClick={() => act(u._id, 'revoke-sessions')} style={{ ...pillBtn, color: '#7A5A10' }}>เตะออก</button>
+                    : <button onClick={() => act(u._id, 'disable')} disabled={isSelf}
+                        title={isSelf ? 'ปิดบัญชีตัวเองไม่ได้' : 'ปิดบัญชี + เตะออกทุกเซสชัน'}
+                        style={{ ...pillBtn, color: '#B4463A', opacity: isSelf ? 0.3 : 1, cursor: isSelf ? 'not-allowed' : 'pointer' }}>ปิด</button>}
+                  <button onClick={() => act(u._id, 'revoke-sessions')}
+                    title="บังคับ logout อุปกรณ์ทั้งหมดของผู้ใช้รายนี้"
+                    style={{ ...pillBtn, color: '#7A5A10' }}>เตะออก</button>
                 </div>
               </div>
             </Card>
@@ -404,13 +429,22 @@ function AddAdminDialog({ onClose, onCreated }) {
 
 function friendlyUserActionError(code) {
   switch (code) {
-    case 'self_disable_forbidden': return 'ปิดบัญชีตนเองไม่ได้';
-    case 'self_demote_forbidden':  return 'ลดสิทธิ์ตนเองไม่ได้';
-    case 'last_admin':             return 'ต้องมี admin อย่างน้อย 1 คน';
-    case 'user_disabled':          return 'บัญชีถูกปิดใช้งาน — เปิดก่อน';
-    case 'forbidden':              return 'ไม่มีสิทธิ์';
-    case 'not_found':              return 'ไม่พบบัญชี';
-    default:                       return 'ดำเนินการไม่สำเร็จ';
+    case 'self_disable_forbidden':    return 'ปิดบัญชีตนเองไม่ได้';
+    case 'self_demote_forbidden':     return 'ลดสิทธิ์ตนเองไม่ได้';
+    case 'last_admin':                return 'ต้องมี admin อย่างน้อย 1 คน';
+    case 'user_disabled':             return 'บัญชีถูกปิดใช้งาน — เปิดก่อน';
+    case 'already_disabled':          return 'บัญชีถูกปิดอยู่แล้ว';
+    case 'concurrent_modification':   return 'มีคนแก้พร้อมกัน — ลองรีเฟรช';
+    case 'forbidden':                 return 'ไม่มีสิทธิ์ (ต้องเป็น role admin)';
+    case 'not_found':                 return 'ไม่พบบัญชี';
+    case 'invalid_id':                return 'ID ไม่ถูกต้อง';
+    case 'invalid_input':             return 'ข้อมูลไม่ถูกต้อง';
+    case 'unauthorized':              return 'ต้อง login ใหม่';
+    case 'rate_limited':              return 'ดำเนินการเร็วเกินไป รอสักครู่';
+    case 'csrf_missing':
+    case 'csrf_mismatch':             return 'CSRF token หมดอายุ — รีโหลดหน้า';
+    case 'request_failed':            return 'เชื่อมต่อเซิร์ฟเวอร์ไม่ได้';
+    default:                          return 'ดำเนินการไม่สำเร็จ';
   }
 }
 
