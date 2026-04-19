@@ -321,11 +321,6 @@ function UserApp({ state, pageKey, onButtonPress, fullscreen = false }) {
         {state.tagline && <div style={{ fontSize: 13, color: theme.muted, marginTop: 4 }}>{state.tagline}</div>}
       </div>
 
-      {/* Hero install CTA — real-time: updated when admin changes downloadLinks */}
-      {typeof DownloadHero === 'function' && (
-        <DownloadHero downloadLinks={state.downloadLinks} theme={theme}/>
-      )}
-
       <div className="ua-enter" style={{ padding: '6px 16px 20px', animationDelay: '140ms' }}>
         <BannerCarousel banners={state.banners} />
       </div>
@@ -389,10 +384,6 @@ function UserApp({ state, pageKey, onButtonPress, fullscreen = false }) {
           </div>
         )}
       </div>
-
-      {typeof DownloadLinksSection === 'function' && (
-        <DownloadLinksSection downloadLinks={state.downloadLinks} theme={theme}/>
-      )}
 
       {(state.contact && (state.contact.label || state.contact.value)) && (
         <div style={{ padding: '22px 16px 8px' }}>
