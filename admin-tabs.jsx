@@ -177,17 +177,26 @@ function friendlyPasswordError(code) {
 }
 
 // ─── Users tab: list + search + actions + add ───────────────
-// Safe confirm wrapper: some embedded/iframe contexts (demo dual-view)
-// can land the toast modal off-screen. Fall through to the browser's
-// native confirm whenever the toast helper isn't available so the
-// admin never ends up clicking a button and seeing nothing happen.
-function safeConfirm(message, okLabel, cancelLabel, opts) {
+// The Users tab uses NATIVE browser dialogs for all destructive actions.
+// Previous iterations routed through toast.confirm, but on some clients
+// that modal sat behind other layers / off-screen and the click seemed
+// to do nothing. window.confirm and window.alert are guaranteed visible
+// by the browser and cannot be hidden by CSS, which is what we want for
+// actions that revoke sessions or change roles.
+function nativeConfirm(message) {
   try {
-    if (typeof toast !== 'undefined' && toast && typeof toast.confirm === 'function') {
-      return toast.confirm(message, okLabel || 'ยืนยัน', cancelLabel || 'ยกเลิก', opts || {});
+    if (typeof window !== 'undefined' && typeof window.confirm === 'function') {
+      return !!window.confirm(message);
     }
   } catch {}
-  return Promise.resolve(typeof window !== 'undefined' && window.confirm ? window.confirm(message) : true);
+  return true;
+}
+function nativeAlert(message) {
+  try {
+    if (typeof window !== 'undefined' && typeof window.alert === 'function') {
+      window.alert(message);
+    }
+  } catch {}
 }
 
 function UsersTab({ currentUserId }) {
@@ -226,8 +235,7 @@ function UsersTab({ currentUserId }) {
 
   const act = async (id, action) => {
     logActivity('click', `${action} on ${id}`);
-    const ok = await safeConfirm(confirmText(action), 'ยืนยัน', 'ยกเลิก', { tone: action === 'disable' ? 'danger' : 'default' });
-    if (!ok) { logActivity('cancel', action); return; }
+    if (!nativeConfirm(confirmText(action))) { logActivity('cancel', action); return; }
     setBusyId(id);
     logActivity('request', `POST /api/admin/users/${id}/${action}`);
     try {
@@ -237,67 +245,57 @@ function UsersTab({ currentUserId }) {
                : action === 'enable'          ? 'เปิดบัญชีแล้ว'
                : 'ดำเนินการสำเร็จ';
       logActivity('ok', msg);
-      toast.success(msg);
+      nativeAlert('สำเร็จ: ' + msg);
       await load();
     } catch (e) {
       logActivity('fail', `${action} · ${e.message || '?'}`);
-      toast.error(friendlyUserActionError(e.message) + ' · ' + (e.message || '?'));
+      nativeAlert('ล้มเหลว: ' + friendlyUserActionError(e.message) + '\n(' + (e.message || '?') + ')');
     } finally { setBusyId(''); }
   };
 
   const changeRole = async (id, nextRole) => {
     logActivity('click', `change role of ${id} → ${nextRole}`);
-    const ok = await safeConfirm(`เปลี่ยนสิทธิ์เป็น "${nextRole}"?`, 'ยืนยัน');
-    if (!ok) { logActivity('cancel', 'changeRole'); return; }
+    if (!nativeConfirm(`เปลี่ยนสิทธิ์เป็น "${nextRole}"?`)) { logActivity('cancel', 'changeRole'); return; }
     setBusyId(id);
     logActivity('request', `PATCH /api/admin/users/${id}/role → ${nextRole}`);
     try {
       await api.changeRole(id, nextRole);
       logActivity('ok', `role now ${nextRole}`);
-      toast.success('เปลี่ยนสิทธิ์เป็น ' + nextRole + ' แล้ว');
+      nativeAlert('เปลี่ยนสิทธิ์เป็น ' + nextRole + ' แล้ว');
       await load();
     } catch (e) {
       logActivity('fail', `changeRole · ${e.message || '?'}`);
-      toast.error(friendlyUserActionError(e.message) + ' · ' + (e.message || '?'));
+      nativeAlert('ล้มเหลว: ' + friendlyUserActionError(e.message) + '\n(' + (e.message || '?') + ')');
     } finally { setBusyId(''); }
   };
 
   const resetPw = async (id, loginId) => {
     logActivity('click', `reset password of ${loginId}`);
-    const ok = await safeConfirm(
-      `รีเซ็ตรหัสของ "${loginId}"? ระบบจะสร้างรหัสชั่วคราวและบังคับเปลี่ยนตอน login ครั้งถัดไป`,
-      'รีเซ็ตรหัส', 'ยกเลิก', { tone: 'danger' }
-    );
-    if (!ok) { logActivity('cancel', 'resetPw'); return; }
+    if (!nativeConfirm(`รีเซ็ตรหัสของ "${loginId}"?\nระบบจะสร้างรหัสชั่วคราวและบังคับเปลี่ยนตอน login ครั้งถัดไป`)) {
+      logActivity('cancel', 'resetPw');
+      return;
+    }
     setBusyId(id);
     logActivity('request', `POST /api/admin/users/${id}/reset-password`);
     try {
       const r = await api.resetUserPassword(id);
       const tempPw = (r && r.tempPassword) || '';
-      // Try clipboard but NEVER block on a second modal — chaining two
-      // confirms can race with toast state.
-      let copied = false;
       try {
         if (navigator && navigator.clipboard && navigator.clipboard.writeText) {
           await navigator.clipboard.writeText(tempPw);
-          copied = true;
         }
       } catch {}
-      if (copied) {
-        logActivity('ok', `reset ${loginId} · password copied`);
-        toast.success(`รีเซ็ตแล้ว · รหัส "${tempPw}" คัดลอกแล้ว`, 9000);
+      logActivity('ok', `reset ${loginId}`);
+      // window.prompt gives the admin a guaranteed selectable copy surface.
+      if (typeof window !== 'undefined' && window.prompt) {
+        window.prompt(`รหัสชั่วคราวของ ${loginId} (Ctrl+C เพื่อคัดลอก):`, tempPw);
       } else {
-        logActivity('ok', `reset ${loginId} · no clipboard`);
-        // Native prompt gives the admin a guaranteed copy surface.
-        if (typeof window !== 'undefined' && window.prompt) {
-          window.prompt(`รหัสผ่านชั่วคราวของ ${loginId} (กด Ctrl+C เพื่อคัดลอก):`, tempPw);
-        }
-        toast.info(`รหัสชั่วคราว: ${tempPw}`, 12000);
+        nativeAlert(`รหัสชั่วคราวของ ${loginId}: ${tempPw}`);
       }
       await load();
     } catch (e) {
       logActivity('fail', `resetPw · ${e.message || '?'}`);
-      toast.error(friendlyUserActionError(e.message) + ' · ' + (e.message || '?'));
+      nativeAlert('ล้มเหลว: ' + friendlyUserActionError(e.message) + '\n(' + (e.message || '?') + ')');
     } finally { setBusyId(''); }
   };
 
