@@ -10,15 +10,39 @@
 function InstallPage() {
   const [cfg, setCfg] = React.useState(null);
   const [error, setError] = React.useState(null);
+  const [status, setStatus] = React.useState('loading');  // loading | ok | expired | no_token
+
+  // Extract token from URL: /install/<token> or ?t=<token>
+  const token = React.useMemo(() => {
+    try {
+      const path = location.pathname.replace(/\/+$/, '');
+      const m = path.match(/^\/(install|download)\/([A-Za-z0-9_-]{8,64})$/);
+      if (m) return m[2];
+      const qs = new URLSearchParams(location.search);
+      return qs.get('t') || qs.get('token') || '';
+    } catch { return ''; }
+  }, []);
 
   const load = React.useCallback(async () => {
-    try { const c = await api.getConfig(); setCfg(c); setError(null); }
-    catch (e) { setError(e.message || 'โหลดไม่สำเร็จ'); }
-  }, []);
+    if (!token) { setStatus('no_token'); return; }
+    try {
+      const c = await api.getInstallConfig(token);
+      setCfg(c); setError(null); setStatus('ok');
+    } catch (e) {
+      const code = e.message;
+      if (code === 'expired' || code === 'not_issued' || code === 'invalid_token' || e.status === 410) {
+        setStatus('expired');
+      } else {
+        setError(e.message || 'โหลดไม่สำเร็จ');
+        setStatus('error');
+      }
+    }
+  }, [token]);
 
   React.useEffect(() => {
     load();
-    // Real-time sync: new APK URL shows up within ~5s without reload
+    // Real-time sync: if admin changes downloadLinks while page is open,
+    // refresh within ~5s without requiring the visitor to reload.
     const id = setInterval(() => { if (!document.hidden) load(); }, 5000);
     return () => clearInterval(id);
   }, [load]);
@@ -27,9 +51,10 @@ function InstallPage() {
   const theme = React.useMemo(() => getTheme(cfg), [cfg]);
   const pageUrl = typeof location !== 'undefined' ? location.origin + location.pathname : '';
 
-  if (!cfg && !error) {
-    return <InstallSkeleton theme={theme}/>;
-  }
+  if (status === 'loading') return <InstallSkeleton theme={theme}/>;
+  if (status === 'no_token') return <TokenRequired theme={theme}/>;
+  if (status === 'expired')  return <LinkExpired theme={theme}/>;
+  if (status === 'error')    return <InstallError theme={theme} message={error}/>;
 
   const dl = (cfg && cfg.downloadLinks) || {};
   const hasAndroid = !!dl.android;
@@ -330,6 +355,76 @@ function Faq({ items, theme }) {
           </div>
         );
       })}
+    </div>
+  );
+}
+
+// Friendly expired-link page — shown when token is stale or revoked.
+function LinkExpired({ theme }) {
+  return (
+    <GateShell theme={theme} icon="⌛" title="ลิงก์หมดอายุแล้ว"
+      body={'ลิงก์ติดตั้งที่คุณเปิดถูกยกเลิกโดยผู้ดูแลระบบ\n\nติดต่อผู้ที่ส่งลิงก์ให้คุณเพื่อขอลิงก์ใหม่'}
+      tone="warn"/>
+  );
+}
+
+function TokenRequired({ theme }) {
+  return (
+    <GateShell theme={theme} icon="🔒" title="ต้องมีลิงก์ติดตั้งที่ถูกต้อง"
+      body={'หน้าดาวน์โหลดนี้เข้าถึงได้ผ่านลิงก์ส่วนตัวเท่านั้น\n\nติดต่อผู้ดูแลเพื่อขอลิงก์ล่าสุด'}
+      tone="warn"/>
+  );
+}
+
+function InstallError({ theme, message }) {
+  return (
+    <GateShell theme={theme} icon="⚠" title="เกิดข้อผิดพลาด"
+      body={'โหลดข้อมูลไม่สำเร็จ: ' + (message || 'unknown') + '\n\nลองรีโหลดอีกครั้ง'}
+      tone="error" onRetry={() => location.reload()}/>
+  );
+}
+
+function GateShell({ theme, icon, title, body, tone, onRetry }) {
+  const bg = tone === 'error' ? 'rgba(180,70,58,0.08)' : 'rgba(210,150,40,0.1)';
+  const color = tone === 'error' ? '#B4463A' : '#7A5A10';
+  return (
+    <div style={{
+      minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center',
+      padding: 20, background: `linear-gradient(180deg, ${theme.bg} 0%, ${theme.surface} 100%)`,
+      color: theme.ink, fontFamily: '"IBM Plex Sans Thai", system-ui',
+    }}>
+      <div style={{
+        maxWidth: 420, width: '100%', background: theme.surface,
+        padding: 'clamp(24px, 5vw, 40px)', borderRadius: 20,
+        border: `1px solid ${theme.border}`, textAlign: 'center',
+        boxShadow: '0 20px 60px -20px rgba(0,0,0,0.2)',
+      }}>
+        <div style={{
+          width: 72, height: 72, borderRadius: '50%',
+          background: bg, color,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          fontSize: 34, margin: '0 auto 18px',
+        }}>{icon}</div>
+        <div style={{ fontSize: 'clamp(18px, 3.5vw, 22px)', fontWeight: 700, marginBottom: 10 }}>{title}</div>
+        <div style={{ fontSize: 14, color: theme.muted, lineHeight: 1.7, whiteSpace: 'pre-wrap', marginBottom: 20 }}>
+          {body}
+        </div>
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'center', flexWrap: 'wrap' }}>
+          {onRetry && (
+            <button onClick={onRetry} style={{
+              padding: '9px 18px', borderRadius: 9, border: 'none',
+              background: theme.accent, color: theme.accentInk,
+              fontFamily: 'inherit', fontSize: 13, fontWeight: 600, cursor: 'pointer',
+            }}>ลองใหม่</button>
+          )}
+          <a href="/" style={{
+            padding: '9px 18px', borderRadius: 9,
+            border: `1px solid ${theme.border}`, background: theme.surface,
+            color: theme.ink, textDecoration: 'none',
+            fontFamily: 'inherit', fontSize: 13, display: 'inline-flex', alignItems: 'center',
+          }}>← หน้าหลัก</a>
+        </div>
+      </div>
     </div>
   );
 }

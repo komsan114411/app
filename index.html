@@ -161,6 +161,7 @@ if ('serviceWorker' in navigator && location.protocol !== 'file:') {
 <script type="text/babel" src="ios-frame.jsx"></script>
 <script type="text/babel" src="browser-window.jsx"></script>
 <script type="text/babel" src="download-links.jsx"></script>
+<script type="text/babel" src="install-share.jsx"></script>
 <script type="text/babel" src="install-page.jsx"></script>
 <script type="text/babel" src="user-app.jsx"></script>
 <script type="text/babel" src="auth-gate.jsx"></script>
@@ -523,7 +524,7 @@ function App() {
 function Root() {
   const path = (typeof location !== 'undefined' ? location.pathname : '/').replace(/\/+$/, '') || '/';
   const qs = (typeof location !== 'undefined' ? new URLSearchParams(location.search) : null);
-  const installMode = path === '/install' || path === '/download' || (qs && qs.get('page') === 'install');
+  const installMode = /^\/(install|download)(\/|$)/.test(path) || (qs && qs.get('page') === 'install');
 
   if (installMode && typeof InstallPage === 'function') {
     return (

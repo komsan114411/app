@@ -19,7 +19,7 @@ const FILES = [
   'toast.jsx', 'online-indicator.jsx', 'saved-indicator.jsx',
   'chart.jsx', 'qr-share.jsx', 'drag-list.jsx',
   'ios-frame.jsx', 'browser-window.jsx',
-  'user-app.jsx', 'install-page.jsx', 'auth-gate.jsx',
+  'user-app.jsx', 'install-page.jsx', 'install-share.jsx', 'auth-gate.jsx',
   'twofa-setup.jsx', 'session-list.jsx',
   'admin-tabs.jsx', 'admin-app.jsx',
   'system-status.jsx', 'push-setup.jsx', 'download-links.jsx',

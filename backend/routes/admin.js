@@ -377,6 +377,63 @@ adminRouter.post('/upload/apk', uploadLimiter, requireRole('admin'), async (req,
   res.json({ ok: true, url, size: req.file.size, filename: origName });
 });
 
+// ── Install-link token ──────────────────────────────────────
+// Admin generates a fresh token whenever they want to kill all previously
+// shared install URLs. Token is kept on AppConfig so it's just one doc to
+// maintain. No history preserved — rotation is irreversible by design.
+adminRouter.get('/install-token', requireRole('admin', 'editor'), async (req, res) => {
+  const cfg = await getAppConfig();
+  res.json({
+    current: cfg.installToken?.current || '',
+    rotatedAt: cfg.installToken?.rotatedAt || null,
+    rotationCount: cfg.installToken?.rotationCount || 0,
+  });
+});
+
+adminRouter.post('/install-token/rotate', adminWriteLimiter, requireRole('admin'), async (req, res) => {
+  const token = crypto.randomBytes(18).toString('base64url');  // 24-char URL-safe
+  const cfg = await getAppConfig();
+  cfg.installToken = {
+    current: token,
+    rotatedAt: new Date(),
+    rotatedBy: req.user.id,
+    rotationCount: (cfg.installToken?.rotationCount || 0) + 1,
+  };
+  await cfg.save();
+  invalidateConfigCache();
+  await AuditLog.create({
+    actorId: req.user.id, actorEmail: req.user.loginId,
+    action: 'install_token_rotate',
+    target: 'AppConfig:installToken',
+    ipHash: hashIp(req.ip), userAgent: safeText(req.get('user-agent') || '', 200),
+    diff: { rotationCount: cfg.installToken.rotationCount },
+  });
+  res.json({
+    token, url: `/install/${token}`,
+    rotatedAt: cfg.installToken.rotatedAt,
+    rotationCount: cfg.installToken.rotationCount,
+  });
+});
+
+adminRouter.post('/install-token/revoke', adminWriteLimiter, requireRole('admin'), async (req, res) => {
+  const cfg = await getAppConfig();
+  cfg.installToken = {
+    current: '',
+    rotatedAt: new Date(),
+    rotatedBy: req.user.id,
+    rotationCount: (cfg.installToken?.rotationCount || 0) + 1,
+  };
+  await cfg.save();
+  invalidateConfigCache();
+  await AuditLog.create({
+    actorId: req.user.id, actorEmail: req.user.loginId,
+    action: 'install_token_revoke',
+    target: 'AppConfig:installToken',
+    ipHash: hashIp(req.ip), userAgent: safeText(req.get('user-agent') || '', 200),
+  });
+  res.json({ ok: true });
+});
+
 // List recent APK uploads so the admin can reuse / rotate old versions.
 adminRouter.get('/uploads/apks', requireRole('admin'), async (req, res) => {
   const rows = await MediaAsset.find({ kind: 'apk' }, { data: 0 })

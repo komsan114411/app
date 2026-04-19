@@ -64,6 +64,34 @@ publicRouter.post('/track', trackLimiter, validate(trackBody), async (req, res) 
   res.status(204).end();
 });
 
+// ─── Install-link token gate ────────────────────────────────────
+// Dedicated download dashboard at /install/:token. The token rotates
+// whenever admin calls /api/admin/install-token/rotate, so a URL that
+// was shared yesterday stops working immediately the moment admin
+// regenerates. Returns only the subset of config the install page needs.
+publicRouter.get('/install/:token/config', publicReadLimiter, async (req, res) => {
+  const token = String(req.params.token || '').slice(0, 80);
+  if (!token) return res.status(400).json({ error: 'invalid_token' });
+  const cfg = await getAppConfig();
+  const current = cfg.installToken?.current;
+  if (!current) return res.status(410).json({ error: 'not_issued' });
+  // Constant-time comparison — the token grants read-only access so timing
+  // leakage isn't catastrophic, but better safe than sorry.
+  const a = Buffer.from(token); const b = Buffer.from(current);
+  if (a.length !== b.length) return res.status(410).json({ error: 'expired' });
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a[i] ^ b[i];
+  if (diff !== 0) return res.status(410).json({ error: 'expired' });
+  res.set('Cache-Control', 'no-store');
+  res.json({
+    appName: cfg.appName,
+    tagline: cfg.tagline,
+    theme: cfg.theme,
+    downloadLinks: cfg.downloadLinks || {},
+    rotatedAt: cfg.installToken?.rotatedAt,
+  });
+});
+
 publicRouter.post('/privacy/forget', publicReadLimiter, async (req, res) => {
   const ipHash = hashIp(req.ip);
   if (!ipHash) return res.status(204).end();

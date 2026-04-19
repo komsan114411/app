@@ -1,6 +1,6 @@
 // sw.js — Service worker: offline shell + stale-while-revalidate + web push.
 
-const VERSION = 'v10';
+const VERSION = 'v11';
 const SHELL = 'shell-' + VERSION;
 
 const SHELL_FILES = [
@@ -14,6 +14,7 @@ const SHELL_FILES = [
   './ios-frame.jsx',
   './browser-window.jsx',
   './install-page.jsx',
+  './install-share.jsx',
   './user-app.jsx',
   './auth-gate.jsx',
   './dashboard-tab.jsx',

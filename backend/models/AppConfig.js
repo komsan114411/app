@@ -40,6 +40,16 @@ const DownloadLinksSchema = new mongoose.Schema({
   note:         { type: String, default: '', maxlength: 140 },
 }, { _id: false });
 
+// Rotating install-link tokens. Admin generates a random token → only URLs
+// carrying that token serve the install dashboard. Regenerating invalidates
+// every previously issued link instantly. No permanent /install URL exists.
+const InstallTokenSchema = new mongoose.Schema({
+  current:    { type: String, default: '', maxlength: 64 },  // the active token (base64url)
+  rotatedAt:  { type: Date, default: null },
+  rotatedBy:  { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+  rotationCount: { type: Number, default: 0 },
+}, { _id: false });
+
 const AppConfigSchema = new mongoose.Schema({
   _id:     { type: String, default: 'singleton' },
   appName: { type: String, default: 'แอปของฉัน', maxlength: 120 },
@@ -58,6 +68,9 @@ const AppConfigSchema = new mongoose.Schema({
 
   // Mobile app download links (Android APK / iOS TestFlight etc.)
   downloadLinks: { type: DownloadLinksSchema, default: () => ({}) },
+
+  // Rotating install-link token — see InstallTokenSchema comment
+  installToken: { type: InstallTokenSchema, default: () => ({}) },
 
   updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
 }, { timestamps: true, optimisticConcurrency: true });

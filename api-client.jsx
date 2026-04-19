@@ -119,6 +119,10 @@ const api = {
   },
   async listApks()            { return request('/api/admin/uploads/apks', { auth: true }); },
   async deleteApk(id)         { return request(`/api/admin/uploads/apks/${encodeURIComponent(id)}`, { method: 'DELETE', auth: true }); },
+  async getInstallToken()     { return request('/api/admin/install-token', { auth: true }); },
+  async rotateInstallToken()  { return request('/api/admin/install-token/rotate', { method: 'POST', auth: true }); },
+  async revokeInstallToken()  { return request('/api/admin/install-token/revoke', { method: 'POST', auth: true }); },
+  async getInstallConfig(token) { return request(`/api/install/${encodeURIComponent(token)}/config`); },
   async getAnalytics()             { return request('/api/admin/analytics', { auth: true }); },
   async getButtonAnalytics(id)     { return request(`/api/admin/analytics/button/${encodeURIComponent(id)}`, { auth: true }); },
   async getAudit(opts = {}) {
