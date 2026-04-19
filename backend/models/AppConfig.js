@@ -66,6 +66,10 @@ const AppConfigSchema = new mongoose.Schema({
   _id:     { type: String, default: 'singleton' },
   appName: { type: String, default: 'แอปของฉัน', maxlength: 120 },
   tagline: { type: String, default: '', maxlength: 200 },
+  // Optional square icon shown in browser tab (favicon), hero avatar on
+  // install page, and admin topbar. Accepts /media/* paths or absolute
+  // https:// URLs (same validation as banner imageUrl).
+  appIcon: { type: String, default: '', maxlength: 512 },
   theme:   { type: String, default: 'cream', maxlength: 32 },
   banners: { type: [BannerSchema], default: [] },
   buttons: { type: [ButtonSchema], default: [] },

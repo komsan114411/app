@@ -23,6 +23,7 @@ publicRouter.get('/config', publicReadLimiter, async (req, res) => {
   const payload = {
     appName: cfg.appName,
     tagline: cfg.tagline,
+    appIcon: cfg.appIcon || '',
     theme: cfg.theme,
     language: cfg.language || 'th',
     darkMode: cfg.darkMode || 'auto',
@@ -86,6 +87,7 @@ publicRouter.get('/install/:token/config', publicReadLimiter, async (req, res) =
   res.json({
     appName: cfg.appName,
     tagline: cfg.tagline,
+    appIcon: cfg.appIcon || '',
     theme: cfg.theme,
     downloadLinks: cfg.downloadLinks || {},
     rotatedAt: cfg.installToken?.rotatedAt,

@@ -93,10 +93,14 @@ function InstallPage() {
             <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 18 }}>
               <div style={{
                 width: 56, height: 56, borderRadius: 16,
-                background: 'rgba(255,255,255,0.2)',
+                background: cfg?.appIcon ? '#fff' : 'rgba(255,255,255,0.2)',
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
-                fontSize: 28, fontWeight: 700, flexShrink: 0,
-              }}>{appName.slice(0, 1).toUpperCase()}</div>
+                fontSize: 28, fontWeight: 700, flexShrink: 0, overflow: 'hidden',
+              }}>
+                {cfg?.appIcon
+                  ? <img src={cfg.appIcon} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }}/>
+                  : appName.slice(0, 1).toUpperCase()}
+              </div>
               <div style={{ minWidth: 0, flex: 1 }}>
                 <div style={{ fontSize: 11, letterSpacing: 1.4, opacity: 0.85, textTransform: 'uppercase', fontWeight: 600 }}>
                   {primary === 'android' ? 'ANDROID APP' : 'iOS APP'}

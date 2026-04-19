@@ -4,6 +4,7 @@
 const DEFAULT_STATE = {
   appName: 'บ้านสวนออร์แกนิก',
   tagline: 'ฟาร์มผักปลอดสาร · ส่งตรงจากสวน',
+  appIcon: '',   // admin-uploaded square icon; empty = fallback to first letter
   theme: 'cream', // cream | sage | midnight | sunset
   banners: [
     { id: 'b1', title: 'ผักสดวันนี้', subtitle: 'เก็บเช้านี้ · ส่งบ่ายนี้', tone: 'leaf' },

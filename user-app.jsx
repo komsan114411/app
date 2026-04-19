@@ -218,7 +218,7 @@ function ContactButton({ contact, theme, onPress }) {
   );
 }
 
-function UserApp({ state, pageKey, onButtonPress }) {
+function UserApp({ state, pageKey, onButtonPress, fullscreen = false }) {
   const baseTheme = THEMES[state.theme] || THEMES.cream;
   const [query, setQuery] = React.useState('');
   const [activeTag, setActiveTag] = React.useState('');     // empty = no tag filter
@@ -288,19 +288,28 @@ function UserApp({ state, pageKey, onButtonPress }) {
 
   const pageUrl = typeof location !== 'undefined' ? location.origin + location.pathname : '';
 
+  const iconSrc = (typeof safeUrl === 'function' && state.appIcon) ? safeUrl(state.appIcon) : state.appIcon;
+
   return (
     <div key={pageKey} style={{
       minHeight: '100%', background: theme.bg, paddingBottom: 40, position: 'relative',
       fontFamily: '"IBM Plex Sans Thai", -apple-system, system-ui, sans-serif',
       color: theme.ink,
+      ...(fullscreen ? { maxWidth: 520, margin: '0 auto' } : {}),
     }}>
-      <div className="ua-enter" style={{ padding: '64px 22px 16px', animationDelay: '60ms' }}>
+      <div className="ua-enter" style={{ padding: fullscreen ? '28px 22px 16px' : '64px 22px 16px', animationDelay: '60ms' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
           <div style={{
-            width: 34, height: 34, borderRadius: 10, background: theme.accent,
+            width: 34, height: 34, borderRadius: 10,
+            background: iconSrc ? '#fff' : theme.accent,
             display: 'flex', alignItems: 'center', justifyContent: 'center',
             color: theme.accentInk, fontWeight: 700, fontSize: 15,
-          }}>{(state.appName || 'A').slice(0, 1)}</div>
+            overflow: 'hidden',
+          }}>
+            {iconSrc
+              ? <img src={iconSrc} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }}/>
+              : (state.appName || 'A').slice(0, 1)}
+          </div>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontSize: 11, letterSpacing: 0.8, color: theme.muted, textTransform: 'uppercase' }}>
               {greetingFor(state.language)}

@@ -32,7 +32,8 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="MyApp">
 <link rel="manifest" href="manifest.webmanifest">
-<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="icon" href="icon-192.png" id="__favicon">
+<link rel="apple-touch-icon" href="icon-192.png" id="__appletouchicon">
 
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -337,6 +338,8 @@ function App({ adminUnlocked = false } = {}) {
     [state.theme, state.buttons.length, state.banners.length]
   );
 
+  useDocumentIdentity(state.appName, state.appIcon);
+
   // Debounced server save with dirty/saving/saved indicator.
   const saveTimer = useRef(null);
   const setStateAndPersist = (updater) => {
@@ -545,17 +548,19 @@ function App({ adminUnlocked = false } = {}) {
 
 // Routing:
 //   /install/:token  → InstallPage (public, token-gated)
-//   /admin           → App in "admin unlocked" mode (login still required in liveMode)
+//   /admin           → App (full admin console with side-by-side preview)
 //   /admin/:token    → same as /admin (token kept for backward compat, ignored)
-//   everything else  → App in user-only mode (no admin toolbar)
-// The admin surface itself is protected by the login form (AuthGate) and
-// role checks on the server — the URL path just decides whether to show
-// the admin toolbar/toggle.
+//   /?preview=1      → App (designer preview — dual view available)
+//   everything else  → UserOnlyPage (fullscreen user app, no admin chrome)
+// The public URL deliberately has no trace of admin — no toolbar, no
+// "เข้าหลังบ้าน" button, no dual-pane preview. Visitors see only the
+// user-facing app as if it were a standalone mobile app.
 function Root() {
   const path = (typeof location !== 'undefined' ? location.pathname : '/').replace(/\/+$/, '') || '/';
   const qs = (typeof location !== 'undefined' ? new URLSearchParams(location.search) : null);
   const installMode = /^\/(install|download)(\/|$)/.test(path) || (qs && qs.get('page') === 'install');
   const adminMode = /^\/admin(\/|$)/.test(path) || (qs && qs.get('admin'));
+  const previewMode = qs && qs.get('preview') === '1';
 
   if (installMode && typeof InstallPage === 'function') {
     return (
@@ -567,13 +572,113 @@ function Root() {
     );
   }
 
+  if (adminMode || previewMode) {
+    return (
+      <ErrorBoundary>
+        <App adminUnlocked={!!adminMode} />
+        {typeof ToastContainer === 'function' && <ToastContainer/>}
+        {typeof OnlineIndicator === 'function' && <OnlineIndicator/>}
+      </ErrorBoundary>
+    );
+  }
+
   return (
     <ErrorBoundary>
-      <App adminUnlocked={!!adminMode} />
+      <UserOnlyPage/>
       {typeof ToastContainer === 'function' && <ToastContainer/>}
       {typeof OnlineIndicator === 'function' && <OnlineIndicator/>}
     </ErrorBoundary>
   );
+}
+
+// UserOnlyPage — canonical public page.
+// Renders UserApp full-viewport with no iPhone frame, no header, no toolbar.
+// Visitors see it exactly as they would inside a mobile app wrapper.
+// Handles:
+//   • initial config boot + 5s polling for live updates
+//   • document.title / favicon / apple-touch-icon sync with admin settings
+//   • demo-mode localStorage fallback when no live backend is reachable
+function UserOnlyPage() {
+  const [state, setState] = useState(DEFAULT_STATE);
+  const [liveMode, setLiveMode] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const boot = await loadInitialState();
+        setState(boot.state);
+        setLiveMode(boot.live);
+      } catch {}
+    })();
+  }, []);
+
+  // Live polling — admin edits land within ~5s
+  useEffect(() => {
+    if (!liveMode) return;
+    let cancelled = false, lastVer = '';
+    const tick = async () => {
+      if (cancelled || document.hidden) return;
+      try {
+        const cfg = await api.getConfig();
+        const ver = cfg.updatedAt ? String(cfg.updatedAt) : '';
+        if (ver && ver === lastVer) return;
+        lastVer = ver;
+        setState(prev => SafeState.sanitize({ ...prev, ...cfg }) || prev);
+      } catch {}
+    };
+    const id = setInterval(tick, 5000);
+    const onVis = () => { if (!document.hidden) tick(); };
+    document.addEventListener('visibilitychange', onVis);
+    return () => { cancelled = true; clearInterval(id); document.removeEventListener('visibilitychange', onVis); };
+  }, [liveMode]);
+
+  // Demo-mode restore
+  useEffect(() => {
+    if (liveMode) return;
+    try {
+      const saved = localStorage.getItem('appState_v2');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        const clean = SafeState.sanitize(parsed);
+        if (clean) setState(clean);
+      }
+    } catch {}
+  }, [liveMode]);
+
+  useDocumentIdentity(state.appName, state.appIcon);
+
+  const pageKey = useMemo(
+    () => state.theme + '-' + state.buttons.length + '-' + state.banners.length,
+    [state.theme, state.buttons.length, state.banners.length]
+  );
+
+  return (
+    <div style={{
+      minHeight: '100vh', width: '100%',
+      background: (THEMES[state.theme] || THEMES.cream).bg,
+    }}>
+      <UserApp
+        state={state}
+        pageKey={pageKey}
+        fullscreen={true}
+        onButtonPress={(b) => { if (liveMode) api.trackClick(b.id, b.label); }}
+      />
+      {liveMode && typeof ConsentBanner === 'function' && <ConsentBanner/>}
+    </div>
+  );
+}
+
+// Reflects admin-edited appName / appIcon in <title>, favicon, apple-touch-icon.
+// Falls back to sensible defaults when either field is empty.
+function useDocumentIdentity(appName, appIcon) {
+  useEffect(() => {
+    if (appName) document.title = appName;
+    const fav = document.getElementById('__favicon');
+    const ati = document.getElementById('__appletouchicon');
+    const src = appIcon || 'icon-192.png';
+    if (fav && fav.getAttribute('href') !== src) fav.setAttribute('href', src);
+    if (ati && ati.getAttribute('href') !== src) ati.setAttribute('href', src);
+  }, [appName, appIcon]);
 }
 
 ReactDOM.createRoot(document.getElementById('root')).render(<Root/>);

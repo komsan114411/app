@@ -548,10 +548,17 @@ function ThemeEditor({ state, setState }) {
   const set = (patch) => setState(s => ({ ...s, ...patch }));
   return (
     <div>
-      <SectionHead title="ธีม & แบรนด์" sub="ชื่อแอป · ธีม · ภาษา · โหมดมืด (สำหรับหน้าผู้ใช้)"/>
+      <SectionHead title="ธีม & แบรนด์" sub="ชื่อแอป · ไอคอน · ธีม · ภาษา · โหมดมืด"/>
+      <Card style={{ marginBottom: 16 }}>
+        <AppIconUploader
+          value={state.appIcon || ''}
+          appName={state.appName}
+          onChange={(url) => set({ appIcon: url })}
+        />
+      </Card>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 16 }}>
         <Card>
-          <Field label="ชื่อแอป">
+          <Field label="ชื่อแอป" hint="แสดงบน title เบราว์เซอร์, หน้าติดตั้ง, และ admin topbar">
             <TextInput maxLength={MAX_APPNAME} value={state.appName} onChange={e => set({ appName: e.target.value })}/>
           </Field>
           <Field label="คำโปรย">
@@ -593,4 +600,81 @@ function ThemeEditor({ state, setState }) {
   );
 }
 
-Object.assign(window, { AdminShell, SectionHead, Card, Field, TextInput, UrlInput });
+// ─── AppIconUploader ────────────────────────────────────────
+// Square image that the admin sets once; wired into favicon / document
+// title / install-page hero via runtime DOM updates in index.html.
+// Reuses the banner upload endpoint (2 MiB image, same validation).
+function AppIconUploader({ value, appName, onChange }) {
+  const [busy, setBusy] = React.useState(false);
+  const [error, setError] = React.useState(null);
+  const fileRef = React.useRef(null);
+  const pick = () => fileRef.current?.click();
+
+  const upload = async (file) => {
+    if (!file) return;
+    if (!/^image\//.test(file.type)) { setError('ต้องเป็นไฟล์รูปเท่านั้น'); return; }
+    if (file.size > 2 * 1024 * 1024) { setError('ไฟล์ใหญ่เกิน 2 MB'); return; }
+    setError(null); setBusy(true);
+    try {
+      const r = await api.uploadBanner(file);
+      onChange(r.url);
+      if (typeof toast !== 'undefined') toast.success('อัปโหลดไอคอนแล้ว');
+    } catch (e) {
+      if (e.message === 'file_too_large') setError('ไฟล์ใหญ่เกิน 2 MB');
+      else if (e.message === 'unsupported_media_type') setError('รองรับ JPG/PNG/WebP/GIF เท่านั้น');
+      else setError('อัปโหลดไม่สำเร็จ: ' + (e.message || ''));
+    } finally {
+      setBusy(false);
+      if (fileRef.current) fileRef.current.value = '';
+    }
+  };
+
+  const clear = () => onChange('');
+
+  return (
+    <div>
+      <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 4 }}>ไอคอนแอป</div>
+      <div style={{ fontSize: 11, color: '#6B6458', marginBottom: 10, lineHeight: 1.5 }}>
+        รูปสี่เหลี่ยมจัตุรัส · ≤2 MB · PNG/WebP แนะนำ · แสดงเป็น favicon, ไอคอนบนหน้าติดตั้ง, และ admin topbar
+      </div>
+      <div style={{ display: 'flex', gap: 14, alignItems: 'center' }}>
+        <div style={{
+          width: 72, height: 72, borderRadius: 16, flexShrink: 0,
+          background: value ? '#fff' : 'rgba(31,27,23,0.08)',
+          border: '1px solid rgba(0,0,0,0.08)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          overflow: 'hidden',
+        }}>
+          {value
+            ? <img src={value} alt="app icon" style={{ width: '100%', height: '100%', objectFit: 'cover' }}/>
+            : <div style={{ fontSize: 28, fontWeight: 700, color: '#6B6458' }}>
+                {(appName || 'A').slice(0, 1).toUpperCase()}
+              </div>}
+        </div>
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            <button onClick={pick} disabled={busy} style={{
+              padding: '7px 14px', borderRadius: 8, border: 'none',
+              background: '#1F1B17', color: '#fff', fontFamily: 'inherit',
+              fontSize: 12, fontWeight: 600, cursor: busy ? 'wait' : 'pointer',
+              opacity: busy ? 0.6 : 1,
+            }}>{busy ? 'กำลังอัปโหลด…' : (value ? 'เปลี่ยนรูป' : 'อัปโหลดรูป')}</button>
+            {value && (
+              <button onClick={clear} disabled={busy} style={{
+                padding: '7px 14px', borderRadius: 8,
+                border: '1px solid rgba(0,0,0,0.12)', background: '#fff',
+                color: '#1F1B17', fontFamily: 'inherit', fontSize: 12, cursor: 'pointer',
+              }}>ลบ</button>
+            )}
+          </div>
+          <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp,image/gif"
+            style={{ display: 'none' }}
+            onChange={e => upload(e.target.files?.[0])}/>
+          {error && <div style={{ fontSize: 11, color: '#B4463A' }}>{error}</div>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+Object.assign(window, { AdminShell, SectionHead, Card, Field, TextInput, UrlInput, AppIconUploader });

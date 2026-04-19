@@ -138,6 +138,7 @@ export function sanitizeConfig(raw) {
   return {
     appName: safeText(raw.appName, LIMITS.MAX_APPNAME),    // allow empty — user page shows placeholder
     tagline: safeText(raw.tagline, LIMITS.MAX_TAGLINE),
+    appIcon: safeUrl(raw.appIcon),                         // /media/*.png|webp etc, or absolute https://
     theme:   pick(raw.theme, ALLOWED.THEMES, 'cream'),
     language: pick(raw.language, ALLOWED.LANGS, 'th'),
     darkMode: pick(raw.darkMode, ALLOWED.DARK_MODES, 'auto'),

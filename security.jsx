@@ -128,6 +128,7 @@ const SafeState = {
     return {
       appName: safeText(raw.appName, MAX_APPNAME),
       tagline: safeText(raw.tagline, MAX_TAGLINE),
+      appIcon: safeUrl(raw.appIcon),
       theme:   SafeText.pickTheme(raw.theme),
       language: raw.language === 'en' ? 'en' : 'th',
       darkMode: ['auto','light','dark'].includes(raw.darkMode) ? raw.darkMode : 'auto',
