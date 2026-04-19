@@ -253,7 +253,9 @@ function App({ adminUnlocked = false } = {}) {
       try {
         const boot = await loadInitialState();
         if (boot.live) { try { localStorage.removeItem('appState_v2'); } catch {} }
+        skipNextSaveRef.current = true;
         setState(boot.state);
+        latestStateRef.current = boot.state;
         setLiveMode(boot.live);
         setAuthed(boot.authed || false);
         // Surface the underlying error even when loadInitialState swallowed it.
@@ -281,8 +283,10 @@ function App({ adminUnlocked = false } = {}) {
         const version = cfg.updatedAt ? String(cfg.updatedAt) : '';
         if (version && version === lastVersion) return;
         lastVersion = version;
+        skipNextSaveRef.current = true;
         setState(prev => {
           const clean = SafeState.sanitize({ ...prev, ...cfg });
+          latestStateRef.current = clean || prev;
           return clean || prev;
         });
       } catch {}
@@ -340,29 +344,54 @@ function App({ adminUnlocked = false } = {}) {
 
   useDocumentIdentity(state.appName, state.appIcon);
 
-  // Debounced server save with dirty/saving/saved indicator.
+  // Debounced server save. Scheduling the timeout from inside a setState
+  // updater worked for a while, but React 18 may run updaters twice in
+  // StrictMode / concurrent rendering — and observation in production
+  // showed zero PATCH requests reaching the server despite the admin
+  // seeing "บันทึกไม่สำเร็จ" toasts. Moved the side effect OUT of
+  // setState and keyed off refs + a useEffect that watches state. This
+  // is the simplest shape that guarantees one save per settled change.
   const saveTimer = useRef(null);
-  const setStateAndPersist = (updater) => {
+  const latestStateRef = useRef(state);
+  const skipNextSaveRef = useRef(false);
+
+  const setStateAndPersist = React.useCallback((updater) => {
     setState(prev => {
       const next = typeof updater === 'function' ? updater(prev) : updater;
       const clean = SafeState.sanitize(next) || prev;
-      if (liveMode && authed) {
-        if (typeof SavedStore !== 'undefined') SavedStore.setStatus('dirty');
-        clearTimeout(saveTimer.current);
-        saveTimer.current = setTimeout(async () => {
-          if (typeof SavedStore !== 'undefined') SavedStore.setStatus('saving');
-          try {
-            await api.patchConfig(clean);
-            if (typeof SavedStore !== 'undefined') SavedStore.setStatus('saved');
-          } catch (err) {
-            if (typeof SavedStore !== 'undefined') SavedStore.setStatus('error');
-            if (typeof toast !== 'undefined') toast.error('บันทึกไม่สำเร็จ: ' + (err.message || 'unknown'));
-          }
-        }, 600);
-      }
+      latestStateRef.current = clean;
       return clean;
     });
-  };
+  }, []);
+
+  // Any state change triggers a save, UNLESS the change came from the
+  // server itself (polling, initial boot, login-success hydrate). Those
+  // paths flip skipNextSaveRef so we don't round-trip fresh server data.
+  useEffect(() => {
+    if (!liveMode) return;
+    if (skipNextSaveRef.current) { skipNextSaveRef.current = false; return; }
+    // We only save when the admin is actually logged in. If authed is
+    // false the user is viewing the public-admin fall-back (shouldn't
+    // reach here, but defensive).
+    if (!authed) return;
+
+    if (typeof SavedStore !== 'undefined') SavedStore.setStatus('dirty');
+    clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(async () => {
+      const snapshot = latestStateRef.current;
+      if (typeof SavedStore !== 'undefined') SavedStore.setStatus('saving');
+      try {
+        await api.patchConfig(snapshot);
+        if (typeof SavedStore !== 'undefined') SavedStore.setStatus('saved');
+      } catch (err) {
+        if (typeof SavedStore !== 'undefined') SavedStore.setStatus('error');
+        const msg = (err && err.message) || 'unknown';
+        try { console.error('[save] PATCH /api/admin/config failed:', msg, err?.responseBody); } catch {}
+        if (typeof toast !== 'undefined') toast.error('บันทึกไม่สำเร็จ: ' + msg);
+      }
+    }, 600);
+    return () => clearTimeout(saveTimer.current);
+  }, [state, liveMode, authed]);
 
   // Keep `me` in sync when tokens refresh or role changes
   const refreshMe = React.useCallback(async () => {
@@ -431,7 +460,15 @@ function App({ adminUnlocked = false } = {}) {
           <AuthGate onSuccess={async (user) => {
             setAuthed(true);
             if (user) setMe(user);
-            try { const cfg = await api.getAdminConfig(); setState(s => SafeState.sanitize({ ...s, ...cfg }) || s); } catch {}
+            try {
+              const cfg = await api.getAdminConfig();
+              skipNextSaveRef.current = true;
+              setState(s => {
+                const merged = SafeState.sanitize({ ...s, ...cfg }) || s;
+                latestStateRef.current = merged;
+                return merged;
+              });
+            } catch {}
           }} />
         ) : (
           <AdminShell
@@ -624,7 +661,7 @@ function UserOnlyPage() {
     })();
   }, []);
 
-  // Live polling — admin edits land within ~5s
+  // Live polling — admin edits land within ~3s
   useEffect(() => {
     if (!liveMode) return;
     let cancelled = false, lastVer = '';
@@ -638,7 +675,8 @@ function UserOnlyPage() {
         setState(prev => SafeState.sanitize({ ...prev, ...cfg }) || prev);
       } catch {}
     };
-    const id = setInterval(tick, 5000);
+    tick();  // fire once immediately on mount so the initial hydrate is fresh
+    const id = setInterval(tick, 3000);
     const onVis = () => { if (!document.hidden) tick(); };
     document.addEventListener('visibilitychange', onVis);
     return () => { cancelled = true; clearInterval(id); document.removeEventListener('visibilitychange', onVis); };
