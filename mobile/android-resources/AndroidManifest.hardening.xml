@@ -1,0 +1,40 @@
+<!--
+  AndroidManifest hardening attributes merged into the main manifest by
+  mobile/scripts/apply-hardening.js during CI.
+
+  Keep this in sync with Capacitor's manifest generation — Capacitor
+  doesn't let you override these directly in capacitor.config, so we
+  post-process the generated manifest.
+
+  Applied to the <application> element:
+    • android:allowBackup="false"
+        Stops `adb backup` from extracting the app's data dir (which
+        would expose the refresh cookie if the app were ever compromised
+        via a rooted phone).
+    • android:fullBackupContent="@xml/backup_rules"
+        If backup IS ever enabled, this rule file excludes the WebView
+        cookie jar, SharedPreferences with tokens, and IndexedDB.
+    • android:networkSecurityConfig="@xml/network_security_config"
+        Force HTTPS, block user CAs, allow localhost for dev only.
+    • android:usesCleartextTraffic="false"
+        Double-enforcement alongside network_security_config.
+    • android:debuggable="false"  (release only — applied via gradle)
+    • android:extractNativeLibs="false"
+        Smaller install size, prevents on-disk native lib exposure.
+    • android:requestLegacyExternalStorage="false"
+        Scoped storage — limits filesystem reach.
+
+  None of these are set by Capacitor by default, which leaves an
+  Android-8-era security posture on a fresh project.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+          xmlns:tools="http://schemas.android.com/tools">
+  <application
+    android:allowBackup="false"
+    android:fullBackupContent="@xml/backup_rules"
+    android:networkSecurityConfig="@xml/network_security_config"
+    android:usesCleartextTraffic="false"
+    android:extractNativeLibs="false"
+    android:requestLegacyExternalStorage="false"
+    tools:replace="android:allowBackup,android:usesCleartextTraffic,android:extractNativeLibs,android:networkSecurityConfig" />
+</manifest>

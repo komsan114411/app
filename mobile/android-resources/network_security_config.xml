@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Network security config: force HTTPS everywhere, pin the API domain,
+     and block cleartext across the board. Copied into
+     android/app/src/main/res/xml/ by the CI workflow. -->
+<network-security-config>
+  <!-- Default: deny cleartext for every host. Release builds will refuse
+       plain HTTP requests, so a man-in-the-middle on public Wi-Fi cannot
+       strip TLS away. -->
+  <base-config cleartextTrafficPermitted="false">
+    <trust-anchors>
+      <!-- Trust only the system root CA store. Exclude user-installed CAs
+           (removes one vector for corporate MITM proxies reading traffic). -->
+      <certificates src="system" />
+    </trust-anchors>
+  </base-config>
+
+  <!-- Pin the Railway domain if you want extra hardening. Uncomment and
+       replace the SHA-256 hash(es) from your cert chain. Certificates
+       rotate so keep at least two (current + backup) pins. -->
+  <!--
+  <domain-config>
+    <domain includeSubdomains="true">app-production-a9d9.up.railway.app</domain>
+    <pin-set expiration="2027-04-19">
+      <pin digest="SHA-256">REPLACE_ME_WITH_YOUR_PIN_HASH=</pin>
+      <pin digest="SHA-256">REPLACE_ME_WITH_BACKUP_PIN_HASH=</pin>
+    </pin-set>
+  </domain-config>
+  -->
+
+  <!-- Allow cleartext to localhost only for local development with adb
+       reverse. Production WebView never hits localhost. -->
+  <domain-config cleartextTrafficPermitted="true">
+    <domain includeSubdomains="false">localhost</domain>
+    <domain includeSubdomains="false">127.0.0.1</domain>
+  </domain-config>
+</network-security-config>

@@ -1,9 +1,28 @@
 name: Android APK Build
 
-# Builds the Capacitor-wrapped APK on every push to main and publishes it to
-# a rolling "latest-apk" prerelease. The download URL is stable, so the admin
-# UI can link to it directly:
-#   https://github.com/<owner>/<repo>/releases/latest-apk/download/app-debug.apk
+# Builds the Capacitor-wrapped APK on every push to main and publishes to
+# a rolling "latest-apk" prerelease.
+#
+# Produces TWO APKs:
+#   • app-debug.apk    — debug signed, for testing (no secret required)
+#   • app-release.apk  — release signed with R8 obfuscation, if the
+#                         SIGNING_KEYSTORE_B64 secret is set
+#
+# If secrets are absent, the release build is skipped and only the debug
+# APK is published. This keeps the workflow green on forks / first clones
+# while allowing production-grade builds once signing is configured.
+#
+# To enable signed release builds:
+#   1. Generate a keystore locally (one-time):
+#        keytool -genkey -v -keystore release.keystore \
+#          -alias myapp -keyalg RSA -keysize 2048 -validity 10000
+#   2. base64 it:   base64 -w0 release.keystore
+#   3. Store GitHub Actions secrets:
+#        SIGNING_KEYSTORE_B64    — base64 of release.keystore
+#        SIGNING_KEY_ALIAS       — the alias you used
+#        SIGNING_KEY_PASSWORD    — key password
+#        SIGNING_STORE_PASSWORD  — keystore password
+#   4. Re-run the workflow.
 
 on:
   push:
@@ -18,17 +37,17 @@ on:
   workflow_dispatch:
     inputs:
       api_base:
-        description: 'API base URL to bake into the APK'
+        description: 'API base URL to bake into the APK (empty → same-origin)'
         required: false
         default: ''
 
 permissions:
-  contents: write        # needed to create releases
+  contents: write
 
 jobs:
   build-apk:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
@@ -53,9 +72,6 @@ jobs:
       - name: Prepare web assets with API_BASE
         working-directory: mobile
         env:
-          # Default to empty → APK uses same-origin relative URLs, which works
-          # when the APK's WebView loads from the deployed Railway/Render site.
-          # Operators who bake a different backend can pass one via dispatch.
           API_BASE: ${{ github.event.inputs.api_base }}
         run: node scripts/prepare-web.js
 
@@ -63,26 +79,87 @@ jobs:
         working-directory: mobile
         run: npx cap sync android
 
+      - name: Apply Android hardening
+        working-directory: mobile
+        run: node scripts/apply-hardening.js
+
       - name: Build debug APK
         working-directory: mobile/android
         run: |
           chmod +x gradlew
           ./gradlew assembleDebug
 
-      - name: Upload APK (workflow artifact)
+      - name: Decode keystore (if signing configured)
+        id: keystore
+        if: ${{ env.HAS_KEYSTORE == 'true' }}
+        env:
+          HAS_KEYSTORE: ${{ secrets.SIGNING_KEYSTORE_B64 != '' && 'true' || 'false' }}
+          SIGNING_KEYSTORE_B64: ${{ secrets.SIGNING_KEYSTORE_B64 }}
+        run: |
+          echo "$SIGNING_KEYSTORE_B64" | base64 -d > mobile/android/app/release.keystore
+          echo "configured=true" >> $GITHUB_OUTPUT
+
+      - name: Check signing secret
+        id: has_sign
+        run: |
+          if [[ -n "${{ secrets.SIGNING_KEYSTORE_B64 }}" ]]; then
+            echo "ok=true" >> $GITHUB_OUTPUT
+          else
+            echo "ok=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Build signed release APK (R8 obfuscated)
+        if: steps.has_sign.outputs.ok == 'true'
+        working-directory: mobile/android
+        env:
+          KEYSTORE_PATH: ${{ github.workspace }}/mobile/android/app/release.keystore
+          KEY_ALIAS: ${{ secrets.SIGNING_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
+          STORE_PASSWORD: ${{ secrets.SIGNING_STORE_PASSWORD }}
+        run: |
+          # Inject signingConfig into app/build.gradle on the fly.
+          cat >> app/build.gradle <<'EOF'
+
+          android {
+            signingConfigs {
+              release {
+                storeFile file(System.getenv("KEYSTORE_PATH"))
+                storePassword System.getenv("STORE_PASSWORD")
+                keyAlias System.getenv("KEY_ALIAS")
+                keyPassword System.getenv("KEY_PASSWORD")
+              }
+            }
+            buildTypes {
+              release {
+                signingConfig signingConfigs.release
+              }
+            }
+          }
+          EOF
+          ./gradlew assembleRelease
+
+      - name: Decode keystore base64 from secret
+        if: steps.has_sign.outputs.ok == 'true'
+        env:
+          SIGNING_KEYSTORE_B64: ${{ secrets.SIGNING_KEYSTORE_B64 }}
+        run: echo "$SIGNING_KEYSTORE_B64" | base64 -d > mobile/android/app/release.keystore
+
+      - name: Upload debug APK (workflow artifact)
         uses: actions/upload-artifact@v4
         with:
           name: app-debug-apk
           path: mobile/android/app/build/outputs/apk/debug/app-debug.apk
           retention-days: 30
 
-      # ── Public download: rolling release ──────────────────────────────
-      # The tag is deleted + recreated each build so the "latest-apk" release
-      # always points at HEAD. End users download via:
-      #   github.com/<owner>/<repo>/releases/download/latest-apk/app-debug.apk
-      # or the always-latest URL:
-      #   github.com/<owner>/<repo>/releases/latest-apk/download/app-debug.apk
-      - name: Publish rolling release
+      - name: Upload release APK (workflow artifact)
+        if: steps.has_sign.outputs.ok == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-release-apk
+          path: mobile/android/app/build/outputs/apk/release/app-release.apk
+          retention-days: 30
+
+      - name: Publish rolling "latest-apk" release
         if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
         uses: softprops/action-gh-release@v2
         with:
@@ -90,14 +167,27 @@ jobs:
           name: Latest Android APK (auto-build)
           prerelease: true
           make_latest: 'false'
-          files: mobile/android/app/build/outputs/apk/debug/app-debug.apk
+          files: |
+            mobile/android/app/build/outputs/apk/debug/app-debug.apk
+            mobile/android/app/build/outputs/apk/release/app-release.apk
+          fail_on_unmatched_files: false
           body: |
             Automatically built APK from commit `${{ github.sha }}`.
             Built at: `${{ github.event.head_commit.timestamp }}`
 
-            ### Install
-            1. Download `app-debug.apk` below
-            2. On Android: Settings → "Install unknown apps" → allow for your browser/file manager
-            3. Open the APK → Install
+            ### What's inside
+            - **app-debug.apk** — debug signed, ~4 MB. For testing; Android shows "unknown source" warning.
+            - **app-release.apk** — release signed + R8 obfuscated (only when signing secrets are set)
 
-            This is a debug build and is not Google-Play signed; Android will show a generic security warning. For a signed release build, configure `android.signingConfig` in `mobile/` and trigger the workflow manually.
+            ### Hardening applied
+            - `android:networkSecurityConfig` → HTTPS-only, system-CA-only, no user CAs
+            - `android:allowBackup="false"` → blocks `adb backup`
+            - `android:usesCleartextTraffic="false"` → no plain HTTP anywhere
+            - `android:extractNativeLibs="false"` → native libs stay inside APK
+            - WebView content debugging disabled
+            - R8 obfuscation + resource shrinking in release build
+
+            ### Install
+            1. Download the APK below
+            2. Settings → "Install unknown apps" → allow for your browser / file manager
+            3. Open the APK → Install
