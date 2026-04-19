@@ -276,6 +276,32 @@ app.use('/uploads', (req, res, next) => {
   index: false,
 }));
 
+// ── Block server-side paths from the static serve ──────────────
+// STATIC_ROOT is the repo root, which contains backend/, node_modules/,
+// mobile/, test/, .github/ etc. Without this guard, express.static below
+// happily serves the entire backend source (routes, middleware, models,
+// utils), the env schema, ALL npm dependencies with exact versions, and
+// the CI/test directories — every one of those is attacker
+// reconnaissance gold. The dotfiles option already blocks .env and
+// .git, but backend/.env is NOT a dotfile at the URL level, and
+// backend/server.js isn't dotted at all. So we filter by prefix.
+const BLOCKED_DIR_PREFIXES = ['/backend/', '/node_modules/', '/mobile/', '/test/', '/.github/', '/scripts/', '/android/'];
+app.use((req, res, next) => {
+  if (req.method !== 'GET' && req.method !== 'HEAD') return next();
+  const p = req.path.toLowerCase();
+  for (const pfx of BLOCKED_DIR_PREFIXES) {
+    if (p === pfx.slice(0, -1) || p.startsWith(pfx)) return res.status(404).json({ error: 'not_found' });
+  }
+  // Also block specific top-level artefacts that have no reason to be
+  // served: package.json, tsconfig, ESLint, git, build configs.
+  const BLOCKED_TOP = new Set([
+    '/package.json', '/package-lock.json', '/pnpm-lock.yaml', '/yarn.lock',
+    '/tsconfig.json', '/railway.json', '/readme.md', '/dockerfile',
+  ]);
+  if (BLOCKED_TOP.has(p)) return res.status(404).json({ error: 'not_found' });
+  next();
+});
+
 // ── Static frontend — served from project root (index.html + jsx + icons) ──
 app.use(express.static(STATIC_ROOT, {
   index: 'index.html',
