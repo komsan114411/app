@@ -85,7 +85,7 @@ export function sanitizeConfig(raw) {
 
   const buttons = Array.isArray(raw.buttons) ? raw.buttons.slice(0, LIMITS.MAX_BUTTONS).map(b => ({
     id:    safeText(b && b.id, 32) || crypto.randomUUID(),
-    label: safeText(b && b.label, LIMITS.MAX_LABEL) || 'ปุ่ม',
+    label: safeText(b && b.label, LIMITS.MAX_LABEL),     // allow empty — admin shows placeholder
     sub:   safeText(b && b.sub, LIMITS.MAX_SUB),
     icon:  pick(b && b.icon, ALLOWED.ICONS, 'sparkle'),
     url:   safeUrl(b && b.url),
@@ -106,7 +106,7 @@ export function sanitizeConfig(raw) {
 
   const contactRaw = (raw.contact && typeof raw.contact === 'object') ? raw.contact : {};
   const contact = {
-    label:   safeText(contactRaw.label, LIMITS.MAX_LABEL) || 'ติดต่อแอดมิน',
+    label:   safeText(contactRaw.label, LIMITS.MAX_LABEL),  // allow empty — user page hides contact button
     channel: pick(contactRaw.channel, ALLOWED.CHANNELS, 'line'),
     value:   safeText(contactRaw.value, LIMITS.MAX_VALUE),
   };
@@ -121,18 +121,26 @@ export function sanitizeConfig(raw) {
     }
   }
 
+  // Mobile app download links — admin can paste URLs to APK/Play/App Store.
+  const downloadRaw = (raw.downloadLinks && typeof raw.downloadLinks === 'object') ? raw.downloadLinks : {};
+  const downloadLinks = {
+    android:      safeUrl(downloadRaw.android),
+    ios:          safeUrl(downloadRaw.ios),
+    androidLabel: safeText(downloadRaw.androidLabel, 40),
+    iosLabel:     safeText(downloadRaw.iosLabel, 40),
+    note:         safeText(downloadRaw.note, 140),
+  };
+
   return {
-    appName: safeText(raw.appName, LIMITS.MAX_APPNAME) || 'แอปของฉัน',
+    appName: safeText(raw.appName, LIMITS.MAX_APPNAME),    // allow empty — user page shows placeholder
     tagline: safeText(raw.tagline, LIMITS.MAX_TAGLINE),
     theme:   pick(raw.theme, ALLOWED.THEMES, 'cream'),
     language: pick(raw.language, ALLOWED.LANGS, 'th'),
     darkMode: pick(raw.darkMode, ALLOWED.DARK_MODES, 'auto'),
     featureFlags,
+    downloadLinks,
     banners,
-    buttons: buttons.length ? buttons : [{
-      id: crypto.randomUUID(), label: 'ปุ่มแรก', sub: '', icon: 'sparkle', url: '', tags: [],
-      publishAt: null, unpublishAt: null, variant: '',
-    }],
+    buttons,
     contact,
   };
 }

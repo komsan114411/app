@@ -74,15 +74,23 @@ const SafeText = {
 };
 
 // ─── State sanitizer — run BEFORE setState on any outside input ─
+// Fields that the admin can intentionally blank (appName, tagline, button
+// labels, contact label, buttons array) are PRESERVED as empty when the
+// admin clears them. The UI renders placeholders instead of forcing the
+// value back to a hard-coded default, which used to make "delete + save"
+// flicker back to the default on the next realtime poll.
 const SafeState = {
   sanitize(raw) {
     if (!raw || typeof raw !== 'object') return null;
     const buttons = Array.isArray(raw.buttons) ? raw.buttons.slice(0, MAX_BUTTONS).map(b => ({
       id:    safeText(b && b.id, 32) || ('q' + Math.random().toString(36).slice(2, 9)),
-      label: safeText(b && b.label, MAX_LABEL) || 'ปุ่ม',
+      label: safeText(b && b.label, MAX_LABEL),
       sub:   safeText(b && b.sub,   MAX_SUB),
       icon:  SafeText.pickIcon(b && b.icon),
       url:   safeUrl(b && b.url),
+      tags:  Array.isArray(b && b.tags) ? b.tags.filter(t => typeof t === 'string').slice(0, 10) : [],
+      publishAt:   (b && b.publishAt) || null,
+      unpublishAt: (b && b.unpublishAt) || null,
     })) : [];
 
     const banners = Array.isArray(raw.banners) ? raw.banners.slice(0, MAX_BANNERS).map(b => ({
@@ -90,25 +98,36 @@ const SafeState = {
       title:    safeText(b && b.title, MAX_LABEL),
       subtitle: safeText(b && b.subtitle, MAX_SUB),
       tone:     SafeText.pickTone(b && b.tone),
+      imageUrl: safeUrl(b && b.imageUrl),
+      linkUrl:  safeUrl(b && b.linkUrl),
     })) : [];
 
     const contactRaw = (raw.contact && typeof raw.contact === 'object') ? raw.contact : {};
     const contact = {
-      label:   safeText(contactRaw.label, MAX_LABEL) || 'ติดต่อแอดมิน',
+      label:   safeText(contactRaw.label, MAX_LABEL),
       channel: SafeText.pickChannel(contactRaw.channel),
       value:   safeText(contactRaw.value, MAX_VALUE),
     };
 
+    const dlRaw = (raw.downloadLinks && typeof raw.downloadLinks === 'object') ? raw.downloadLinks : {};
+    const downloadLinks = {
+      android:      safeUrl(dlRaw.android),
+      ios:          safeUrl(dlRaw.ios),
+      androidLabel: safeText(dlRaw.androidLabel, 40),
+      iosLabel:     safeText(dlRaw.iosLabel, 40),
+      note:         safeText(dlRaw.note, 140),
+    };
+
     return {
-      appName: safeText(raw.appName, MAX_APPNAME) || 'แอปของฉัน',
+      appName: safeText(raw.appName, MAX_APPNAME),
       tagline: safeText(raw.tagline, MAX_TAGLINE),
       theme:   SafeText.pickTheme(raw.theme),
+      language: raw.language === 'en' ? 'en' : 'th',
+      darkMode: ['auto','light','dark'].includes(raw.darkMode) ? raw.darkMode : 'auto',
       banners,
-      buttons: buttons.length ? buttons : [{
-        id: 'q' + Math.random().toString(36).slice(2, 7),
-        label: 'ปุ่มแรก', sub: '', icon: 'sparkle', url: '',
-      }],
+      buttons,
       contact,
+      downloadLinks,
     };
   },
 };

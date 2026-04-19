@@ -249,6 +249,7 @@ adminRouter.get('/config', requireRole('admin', 'editor'), async (req, res) => {
     language: cfg.language || 'th', darkMode: cfg.darkMode || 'auto',
     banners: cfg.banners, buttons: cfg.buttons, contact: cfg.contact,
     featureFlags: cfg.featureFlags || {},
+    downloadLinks: cfg.downloadLinks || {},
     updatedAt: cfg.updatedAt,
   });
 });
@@ -264,6 +265,7 @@ adminRouter.patch('/config', adminWriteLimiter, requireRole('admin', 'editor'), 
     appName: clean.appName, tagline: clean.tagline, theme: clean.theme,
     language: clean.language, darkMode: clean.darkMode,
     featureFlags: clean.featureFlags,
+    downloadLinks: clean.downloadLinks,
     banners: clean.banners, buttons: clean.buttons, contact: clean.contact,
     updatedBy: req.user.id,
   });

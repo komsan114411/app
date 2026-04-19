@@ -296,7 +296,9 @@ function UserApp({ state, pageKey, onButtonPress }) {
           </button>
           {typeof QrShareButton === 'function' && pageUrl && <QrShareButton url={pageUrl} theme={theme}/>}
         </div>
-        <div style={{ fontSize: 26, fontWeight: 700, lineHeight: 1.2, letterSpacing: -0.3 }}>{state.appName}</div>
+        <div style={{ fontSize: 26, fontWeight: 700, lineHeight: 1.2, letterSpacing: -0.3, color: state.appName ? theme.ink : theme.muted }}>
+          {state.appName || 'ยังไม่ได้ตั้งชื่อแอป'}
+        </div>
         {state.tagline && <div style={{ fontSize: 13, color: theme.muted, marginTop: 4 }}>{state.tagline}</div>}
       </div>
 
@@ -337,15 +339,26 @@ function UserApp({ state, pageKey, onButtonPress }) {
           ))}
         </div>
         {filteredButtons.length === 0 && (
-          <div style={{ padding: 20, textAlign: 'center', fontSize: 12, color: theme.muted }}>
-            ไม่พบปุ่มที่ตรงกับคำค้น
+          <div style={{
+            padding: '24px 16px', textAlign: 'center', fontSize: 12,
+            color: theme.muted, border: `1px dashed ${theme.border}`, borderRadius: 14, background: theme.surface,
+          }}>
+            {state.buttons.length === 0
+              ? 'แอดมินยังไม่ได้เพิ่มปุ่มเมนู'
+              : 'ไม่พบปุ่มที่ตรงกับคำค้น'}
           </div>
         )}
       </div>
 
-      <div style={{ padding: '22px 16px 8px' }}>
-        <ContactButton contact={state.contact} theme={theme} />
-      </div>
+      {typeof DownloadLinksSection === 'function' && (
+        <DownloadLinksSection downloadLinks={state.downloadLinks} theme={theme}/>
+      )}
+
+      {(state.contact && (state.contact.label || state.contact.value)) && (
+        <div style={{ padding: '22px 16px 8px' }}>
+          <ContactButton contact={state.contact} theme={theme} />
+        </div>
+      )}
 
       <div className="ua-enter" style={{ textAlign: 'center', fontSize: 11, color: theme.muted, padding: '14px 16px', animationDelay: '600ms' }}>
         จัดการโดยแอดมิน · อัปเดตล่าสุด {new Date().toLocaleDateString('th-TH')}

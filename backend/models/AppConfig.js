@@ -32,6 +32,14 @@ const ContactSchema = new mongoose.Schema({
   value:   { type: String, default: '', maxlength: 200 },
 }, { _id: false });
 
+const DownloadLinksSchema = new mongoose.Schema({
+  android:      { type: String, default: '', maxlength: 2048 },   // URL to APK / Play Store
+  ios:          { type: String, default: '', maxlength: 2048 },   // URL to App Store / TestFlight
+  androidLabel: { type: String, default: '', maxlength: 40 },
+  iosLabel:     { type: String, default: '', maxlength: 40 },
+  note:         { type: String, default: '', maxlength: 140 },
+}, { _id: false });
+
 const AppConfigSchema = new mongoose.Schema({
   _id:     { type: String, default: 'singleton' },
   appName: { type: String, default: 'แอปของฉัน', maxlength: 120 },
@@ -47,6 +55,9 @@ const AppConfigSchema = new mongoose.Schema({
 
   // Feature flags — frontend reads these to toggle UI paths
   featureFlags: { type: mongoose.Schema.Types.Mixed, default: {} },
+
+  // Mobile app download links (Android APK / iOS TestFlight etc.)
+  downloadLinks: { type: DownloadLinksSchema, default: () => ({}) },
 
   updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
 }, { timestamps: true, optimisticConcurrency: true });

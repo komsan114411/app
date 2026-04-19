@@ -30,6 +30,7 @@ publicRouter.get('/config', publicReadLimiter, async (req, res) => {
     buttons: publishedButtons(cfg.buttons),   // filter by publishAt / unpublishAt
     contact: cfg.contact,
     featureFlags: cfg.featureFlags || {},
+    downloadLinks: cfg.downloadLinks || {},
     capabilities: {
       emailReset: !!env.SMTP_HOST,
       pushNotifications: !!(env.PUSH_VAPID_PUBLIC && env.PUSH_VAPID_PRIVATE),

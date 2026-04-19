@@ -55,6 +55,13 @@ export const configBody = z.object({
     channel: z.enum(['line','messenger','whatsapp','phone','email']).optional(),
     value: z.string().max(200).optional(),
   }).optional(),
+  downloadLinks: z.object({
+    android:      z.string().max(2048).optional().or(z.literal('')),
+    ios:          z.string().max(2048).optional().or(z.literal('')),
+    androidLabel: z.string().max(40).optional().or(z.literal('')),
+    iosLabel:     z.string().max(40).optional().or(z.literal('')),
+    note:         z.string().max(140).optional().or(z.literal('')),
+  }).optional(),
 }).strict();
 
 export function validate(schema, source = 'body') {

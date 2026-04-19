@@ -15,6 +15,7 @@ function AdminShell({ state, setState, onPreview, liveMode, authed, onLogout, me
     { id: 'buttons', label: 'ปุ่มเมนู', icon: 'sparkle' },
     { id: 'banner',  label: 'แบนเนอร์', icon: 'image' },
     { id: 'contact', label: 'ติดต่อแอดมิน', icon: 'chat' },
+    { id: 'download', label: 'ดาวน์โหลดแอป', icon: 'upload' },
     { id: 'theme',   label: 'ธีม & แบรนด์', icon: 'settings' },
   ];
   const adminOnlyTabs = liveMode ? [
@@ -120,6 +121,7 @@ function AdminShell({ state, setState, onPreview, liveMode, authed, onLogout, me
         {tab === 'buttons'  && <ButtonsEditor state={state} setState={setState}/>}
         {tab === 'banner'   && <BannerEditor state={state} setState={setState}/>}
         {tab === 'contact'  && <ContactEditor state={state} setState={setState}/>}
+        {tab === 'download' && typeof DownloadLinksEditor === 'function' && <DownloadLinksEditor state={state} setState={setState}/>}
         {tab === 'theme'    && <ThemeEditor state={state} setState={setState}/>}
         {tab === 'security' && typeof SecurityTab === 'function' && <SecurityTab onLogout={onLogout} mustChange={mustChange} onPasswordChanged={onPasswordChanged} me={me} onMeRefresh={onMeRefresh}/>}
         {tab === 'users'    && typeof UsersTab    === 'function' && <UsersTab currentUserId={me && me.id}/>}

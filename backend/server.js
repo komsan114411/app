@@ -310,8 +310,18 @@ export async function boot() {
   };
   process.on('SIGTERM', () => shutdown('SIGTERM'));
   process.on('SIGINT',  () => shutdown('SIGINT'));
-  process.on('unhandledRejection', (err) => log.error({ err }, 'unhandled_rejection'));
-  process.on('uncaughtException',  (err) => { log.error({ err }, 'uncaught_exception'); process.exit(1); });
+  process.on('unhandledRejection', (err) => {
+    // Serialize whatever got rejected — Error, plain object, or scalar —
+    // so the log actually contains a stack / message instead of "{}".
+    const payload = err instanceof Error
+      ? { name: err.name, message: err.message, stack: err.stack }
+      : { value: typeof err === 'object' ? JSON.stringify(err) : String(err) };
+    log.error(payload, 'unhandled_rejection');
+  });
+  process.on('uncaughtException',  (err) => {
+    log.error({ name: err?.name, message: err?.message, stack: err?.stack }, 'uncaught_exception');
+    process.exit(1);
+  });
 }
 
 // Only boot when run directly, not when imported by tests

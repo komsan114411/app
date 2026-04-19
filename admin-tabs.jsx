@@ -409,6 +409,68 @@ function friendlyUserActionError(code) {
   }
 }
 
+// ─── Download Links tab: APK / App Store URLs ─────────────────
+function DownloadLinksEditor({ state, setState }) {
+  const dl = state.downloadLinks || {};
+  const patch = (p) => setState(s => ({
+    ...s,
+    downloadLinks: { ...(s.downloadLinks || {}), ...p },
+  }));
+
+  return (
+    <div>
+      <SectionHead
+        title="ลิงก์ดาวน์โหลดแอป (มือถือ)"
+        sub="วาง URL ไปยัง APK / Play Store / App Store · หน้าผู้ใช้จะเห็นปุ่มดาวน์โหลดอัตโนมัติ"
+      />
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 16 }}>
+        <Card>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+            <div style={{ width: 30, height: 30, borderRadius: 8, background: 'rgba(58,175,93,0.12)', color: '#058850', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: 16 }}>▶</div>
+            <div style={{ fontSize: 13, fontWeight: 700 }}>Android</div>
+          </div>
+          <Field label="URL (APK / Google Play)" hint="รองรับ https:// · รับไฟล์ .apk ตรงๆ หรือลิงก์ Play Store">
+            <UrlInput value={dl.android || ''} onChange={v => patch({ android: v })}
+              placeholder="https://play.google.com/store/apps/details?id=..."/>
+          </Field>
+          <Field label="ข้อความบนปุ่ม (ไม่บังคับ)" hint="default: ดาวน์โหลด APK">
+            <TextInput maxLength={40} value={dl.androidLabel || ''}
+              onChange={e => patch({ androidLabel: e.target.value })} placeholder="ดาวน์โหลด APK"/>
+          </Field>
+        </Card>
+        <Card>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+            <div style={{ width: 30, height: 30, borderRadius: 8, background: 'rgba(0,122,255,0.12)', color: '#007AFF', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: 16 }}>⌘</div>
+            <div style={{ fontSize: 13, fontWeight: 700 }}>iOS</div>
+          </div>
+          <Field label="URL (App Store / TestFlight)" hint="iOS ต้องผ่าน App Store หรือ TestFlight · ติดตั้งตรงไม่ได้">
+            <UrlInput value={dl.ios || ''} onChange={v => patch({ ios: v })}
+              placeholder="https://apps.apple.com/..."/>
+          </Field>
+          <Field label="ข้อความบนปุ่ม (ไม่บังคับ)" hint="default: เปิดใน App Store">
+            <TextInput maxLength={40} value={dl.iosLabel || ''}
+              onChange={e => patch({ iosLabel: e.target.value })} placeholder="เปิดใน App Store"/>
+          </Field>
+        </Card>
+      </div>
+      <Card style={{ marginTop: 14 }}>
+        <Field label="หมายเหตุถึงผู้ใช้ (ไม่บังคับ · แสดงใต้ปุ่มดาวน์โหลด)">
+          <TextInput maxLength={140} value={dl.note || ''}
+            onChange={e => patch({ note: e.target.value })}
+            placeholder="เช่น เวอร์ชัน 1.0 · อัปเดต 25 ก.ค. 2568"/>
+        </Field>
+      </Card>
+      <div style={{ marginTop: 12, padding: '12px 14px', borderRadius: 10, background: '#F3EFE7', fontSize: 11, color: '#6B6458', lineHeight: 1.6 }}>
+        <strong>วิธีสร้าง APK:</strong> CI workflow บน GitHub Actions สร้าง APK ให้อัตโนมัติเมื่อ push code
+        (ดู <code>.github/workflows/</code>). หลัง build เสร็จ ดาวน์โหลด artifact หรือปักเป็น GitHub Release
+        แล้ว paste URL ตรงนี้. ไม่มี CI ก็ paste URL Google Drive / Dropbox ได้
+      </div>
+    </div>
+  );
+}
+
+window.DownloadLinksEditor = DownloadLinksEditor;
+
 function friendlyCreateError(code) {
   switch (code) {
     case 'login_id_taken': return 'Login ID นี้มีอยู่แล้ว';
