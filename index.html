@@ -2,6 +2,16 @@
 <html lang="th">
 <head>
 <meta charset="UTF-8">
+<!--
+  Root-anchored base. Without this, SPA fallback for nested paths like
+  /install/<token> would make the relative <script src="security.jsx">
+  resolve to /install/<token>/security.jsx — the server then serves
+  index.html for that unknown path (200 OK, text/html), Babel tries to
+  compile HTML as JSX, and the page renders completely blank with no
+  obvious error. <base href="/"> forces every relative URL (scripts,
+  manifest, icons, SW register call) to resolve from the origin root.
+-->
+<base href="/">
 <title>แอป หน้าบ้าน & หลังบ้าน</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 
