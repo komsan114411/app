@@ -35,9 +35,12 @@ async function request(path, { method = 'GET', body, auth = false, retry = true,
       body: body === undefined
         ? undefined
         : (body instanceof FormData ? body : JSON.stringify(body)),
-      credentials: 'include', cache: 'no-store', redirect: 'error',
+      credentials: 'include', cache: 'no-store',
     });
-  } catch { throw new Error('request_failed'); }
+  } catch (e) {
+    if (typeof console !== 'undefined') console.error('[api]', method, path, 'network_error:', e?.message || e);
+    throw new Error('request_failed');
+  }
 
   if (res.status === 401 && auth && retry) {
     const ok = await tryRefresh();
@@ -146,11 +149,15 @@ async function loadInitialState() {
   if (!API_BASE && !LIVE_POSSIBLE) return { state: DEFAULT_STATE, live: false, authed: false };
   try {
     const cfg = await api.getConfig();
+    if (typeof console !== 'undefined') console.info('[boot] /api/config OK', { appName: cfg && cfg.appName, capabilities: cfg && cfg.capabilities });
     const merged = SafeState.sanitize({ ...DEFAULT_STATE, ...cfg }) || DEFAULT_STATE;
     const authed = await tryRefresh();
     return { state: merged, live: true, authed };
-  } catch {
-    return { state: DEFAULT_STATE, live: false, authed: false };
+  } catch (e) {
+    const msg = (e && e.message) || String(e);
+    try { window.__bootError = msg; } catch {}
+    if (typeof console !== 'undefined') console.error('[boot] live mode failed — falling back to demo:', msg);
+    return { state: DEFAULT_STATE, live: false, authed: false, error: msg };
   }
 }
 

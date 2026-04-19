@@ -237,8 +237,12 @@ function App() {
         setState(boot.state);
         setLiveMode(boot.live);
         setAuthed(boot.authed || false);
+        // Surface the underlying error even when loadInitialState swallowed it.
+        // Without this, a failing /api/config silently lands the user in demo
+        // mode with no visible explanation.
+        if (!boot.live && boot.error) setBootError(String(boot.error).slice(0, 200));
       } catch (e) {
-        setBootError(String(e.message || 'boot_failed').slice(0, 120));
+        setBootError(String(e.message || 'boot_failed').slice(0, 200));
       }
     })();
   }, []);
@@ -424,7 +428,18 @@ function App() {
       <div className="header-copy">
         <h1>แอปหน้าบ้าน & หลังบ้าน</h1>
         <p>หน้าผู้ใช้มีปุ่มเมนู 1–12 ปุ่ม ปุ่มติดต่อแอดมิน และแบนเนอร์ที่หมุนอัตโนมัติ · แอดมินแก้ไขในแผงควบคุม แล้วอัปเดตแบบเรียลไทม์</p>
-        {bootError && <p style={{ color: '#B4463A', fontSize: 12, marginTop: 8 }}>โหลดคอนฟิกจากเซิร์ฟเวอร์ไม่สำเร็จ — ใช้โหมด demo</p>}
+        {bootError && (
+          <div style={{
+            margin: '12px auto 0', maxWidth: 560,
+            padding: '10px 14px', borderRadius: 9,
+            background: 'rgba(180,70,58,0.08)', border: '1px solid rgba(180,70,58,0.3)',
+            color: '#B4463A', fontSize: 12, lineHeight: 1.55, textAlign: 'left',
+          }}>
+            <strong>⚠ เชื่อมต่อเซิร์ฟเวอร์ไม่สำเร็จ — กำลังใช้โหมด demo</strong><br/>
+            <code style={{ fontSize: 11, opacity: 0.85 }}>{bootError}</code><br/>
+            <span style={{ fontSize: 11, opacity: 0.75 }}>เปิด DevTools (F12) → Console เพื่อดูรายละเอียด</span>
+          </div>
+        )}
       </div>
 
       <div className="toolbar" role="tablist">

@@ -111,25 +111,45 @@ app.use((req, res, next) => {
 // CORS — strict origin allow-list + auto-allow same-origin.
 // Same-origin requests happen when the frontend is served from the same
 // host as the API (unified deploy on Railway/Render), which is our default.
+//
+// Two normalisations are needed for proxies in front of us (Railway, Render,
+// Fly): trailing slashes and case differences in env-supplied origins, and
+// X-Forwarded-Host vs Host (the proxy may rewrite Host to an internal name
+// while the browser's Origin is still the public hostname).
+function normalizeOrigin(s) {
+  return String(s || '').trim().replace(/\/+$/, '').toLowerCase();
+}
+const ALLOWED_ORIGINS_NORM = (env.CORS_ORIGINS || []).map(normalizeOrigin);
+
 const corsOpts = {
   origin(origin, cb) {
     if (!origin) return cb(null, true);
-    if (env.CORS_ORIGINS.includes(origin)) return cb(null, true);
+    const norm = normalizeOrigin(origin);
+    if (ALLOWED_ORIGINS_NORM.includes(norm)) return cb(null, true);
+    if (!corsRejectWarned) {
+      corsRejectWarned = true;
+      log.warn({ origin, allowed: ALLOWED_ORIGINS_NORM }, 'cors_origin_rejected');
+    }
     return cb(new Error('cors_blocked'));
   },
   credentials: true,
-  methods: ['GET', 'POST', 'PATCH', 'OPTIONS'],
+  methods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-CSRF-Token'],
   maxAge: 600,
 };
+let corsRejectWarned = false;
+
 app.use((req, res, next) => {
   // Auto-allow same-origin without requiring it in CORS_ORIGINS.
+  // Behind a proxy, Host can be the internal hostname while the browser's
+  // Origin is the public one — prefer X-Forwarded-Host when trust_proxy is on.
   const origin = req.get('origin');
   if (origin) {
     try {
       const o = new URL(origin);
-      const host = req.get('host');
-      if (o.host === host) return next();   // skip CORS entirely for same-origin
+      const fwdHost = (req.get('x-forwarded-host') || '').split(',')[0].trim();
+      const host = fwdHost || req.get('host');
+      if (host && o.host.toLowerCase() === host.toLowerCase()) return next();
     } catch {}
   }
   return cors(corsOpts)(req, res, next);
