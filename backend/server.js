@@ -9,6 +9,7 @@ import hpp from 'hpp';
 import mongoSanitize from 'express-mongo-sanitize';
 import pinoHttp from 'pino-http';
 import path from 'node:path';
+import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 import { env } from './config/env.js';
@@ -35,8 +36,24 @@ import { authRouter } from './routes/auth.js';
 import { adminRouter } from './routes/admin.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const STATIC_ROOT = path.resolve(__dirname, '..');
+
+// Find where the frontend lives. In a unified deploy it's at the repo root
+// (one dir up from backend/). If the backend was deployed standalone, a build
+// step can place files in backend/public/ instead.
+function findStaticRoot() {
+  const candidates = [
+    path.resolve(__dirname, '..'),           // repo root (unified deploy)
+    path.resolve(__dirname, 'public'),       // bundled fallback
+    path.resolve(__dirname, '..', 'dist'),   // if a future build step emits here
+  ];
+  for (const p of candidates) {
+    try { if (fs.existsSync(path.join(p, 'index.html'))) return p; } catch {}
+  }
+  return candidates[0];
+}
+const STATIC_ROOT = findStaticRoot();
 const UPLOAD_ROOT = path.resolve(env.UPLOAD_DIR);
+log.info({ STATIC_ROOT, UPLOAD_ROOT }, 'paths_resolved');
 
 const app = express();
 
