@@ -63,16 +63,7 @@ function BannerCarousel({ banners }) {
     const t = setInterval(() => setI(v => (v + 1) % banners.length), 3800);
     return () => clearInterval(t);
   }, [banners.length]);
-  if (banners.length === 0) {
-    return (
-      <div style={{
-        height: 150, borderRadius: 24,
-        background: 'repeating-linear-gradient(-45deg, rgba(0,0,0,0.04), rgba(0,0,0,0.04) 8px, rgba(0,0,0,0.02) 8px, rgba(0,0,0,0.02) 16px)',
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        color: 'rgba(0,0,0,0.35)', fontSize: 13, fontFamily: 'ui-monospace, monospace',
-      }}>[ banner area · admin ยังไม่ได้อัปโหลด ]</div>
-    );
-  }
+  if (banners.length === 0) return null;
   return (
     <div style={{ position: 'relative', height: 150 }}>
       {banners.map((b, idx) => (
