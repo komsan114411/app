@@ -53,11 +53,15 @@ async function request(path, { method = 'GET', body, auth = false, retry = true,
   if (res.status === 415) throw new Error('unsupported_media_type');
   if (!res.ok) {
     let code = 'request_failed';
+    let body = null;
     try {
-      const err = await res.json();
-      if (err && typeof err.error === 'string') code = err.error.slice(0, 60);
+      body = await res.json();
+      if (body && typeof body.error === 'string') code = body.error.slice(0, 60);
     } catch {}
-    throw new Error(code);
+    const err = new Error(code);
+    err.responseBody = body;         // callers can surface suggestions / details
+    err.status = res.status;
+    throw err;
   }
   if (res.status === 204) return null;
   const ct = res.headers.get('content-type') || '';

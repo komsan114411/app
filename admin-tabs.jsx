@@ -36,9 +36,11 @@ function SecurityTab({ onLogout, mustChange = false, onPasswordChanged, me, onMe
     setStrength(Math.min(4, s));
   }, [next]);
 
+  const [pwSuggestions, setPwSuggestions] = React.useState([]);
+
   const submit = async (e) => {
     e.preventDefault();
-    setMsg(null);
+    setMsg(null); setPwSuggestions([]);
     if (next !== confirm) { setMsg({ kind: 'error', text: 'รหัสใหม่ไม่ตรงกัน' }); return; }
     if (next.length < 12) { setMsg({ kind: 'error', text: 'ต้องยาวอย่างน้อย 12 ตัว' }); return; }
     setBusy(true);
@@ -57,8 +59,13 @@ function SecurityTab({ onLogout, mustChange = false, onPasswordChanged, me, onMe
       onPasswordChanged?.();
     } catch (err) {
       setMsg({ kind: 'error', text: friendlyPasswordError(err.message || 'fail') });
+      if (err.responseBody && Array.isArray(err.responseBody.suggestions)) {
+        setPwSuggestions(err.responseBody.suggestions);
+      }
     } finally {
-      setCurrent(''); setNext(''); setConfirm('');
+      setNext(''); setConfirm('');
+      // Don't clear current — admin may want to retry with the same current pw
+      if (msg?.kind !== 'success') { /* keep current */ } else { setCurrent(''); }
       setBusy(false);
     }
   };
@@ -102,7 +109,14 @@ function SecurityTab({ onLogout, mustChange = false, onPasswordChanged, me, onMe
             {msg && (
               <div style={{ margin: '6px 0 12px', padding: '10px 12px', borderRadius: 9,
                 background: msg.kind === 'success' ? 'rgba(6,199,85,0.08)' : 'rgba(180,70,58,0.08)',
-                color: msg.kind === 'success' ? '#058850' : '#B4463A', fontSize: 12 }}>{msg.text}</div>
+                color: msg.kind === 'success' ? '#058850' : '#B4463A', fontSize: 12 }}>
+                {msg.text}
+                {pwSuggestions.length > 0 && (
+                  <ul style={{ margin: '6px 0 0 16px', padding: 0 }}>
+                    {pwSuggestions.map((s, i) => <li key={i} style={{ fontSize: 11, opacity: 0.85 }}>{s}</li>)}
+                  </ul>
+                )}
+              </div>
             )}
             <button type="submit" disabled={busy} style={{
               width: '100%', padding: '10px', borderRadius: 9, border: 'none',
@@ -211,6 +225,10 @@ function UsersTab({ currentUserId }) {
   // Which row is currently processing a click — disables the row's
   // buttons and shows a spinner so the admin knows something happened.
   const [busyId, setBusyId] = React.useState('');
+  // React-rendered result modal for reveal flows (temp password, etc).
+  // Guaranteed visible even on WebView / Capacitor where window.prompt
+  // may be blocked by the host.
+  const [reveal, setReveal] = React.useState(null);  // { title, body, copyable }
   // Always-visible activity line at the top of the tab. Any click, any
   // success, any failure lands here so the admin has proof the button
   // registered — no need to open DevTools.
@@ -245,11 +263,15 @@ function UsersTab({ currentUserId }) {
                : action === 'enable'          ? 'เปิดบัญชีแล้ว'
                : 'ดำเนินการสำเร็จ';
       logActivity('ok', msg);
-      nativeAlert('สำเร็จ: ' + msg);
+      if (typeof toast !== 'undefined') toast.success(msg);
       await load();
     } catch (e) {
       logActivity('fail', `${action} · ${e.message || '?'}`);
-      nativeAlert('ล้มเหลว: ' + friendlyUserActionError(e.message) + '\n(' + (e.message || '?') + ')');
+      setReveal({
+        title: 'ดำเนินการไม่สำเร็จ',
+        body: friendlyUserActionError(e.message) + '\n(' + (e.message || '?') + ')',
+        tone: 'error',
+      });
     } finally { setBusyId(''); }
   };
 
@@ -261,11 +283,15 @@ function UsersTab({ currentUserId }) {
     try {
       await api.changeRole(id, nextRole);
       logActivity('ok', `role now ${nextRole}`);
-      nativeAlert('เปลี่ยนสิทธิ์เป็น ' + nextRole + ' แล้ว');
+      if (typeof toast !== 'undefined') toast.success('เปลี่ยนสิทธิ์เป็น ' + nextRole + ' แล้ว');
       await load();
     } catch (e) {
       logActivity('fail', `changeRole · ${e.message || '?'}`);
-      nativeAlert('ล้มเหลว: ' + friendlyUserActionError(e.message) + '\n(' + (e.message || '?') + ')');
+      setReveal({
+        title: 'เปลี่ยนสิทธิ์ไม่สำเร็จ',
+        body: friendlyUserActionError(e.message) + '\n(' + (e.message || '?') + ')',
+        tone: 'error',
+      });
     } finally { setBusyId(''); }
   };
 
@@ -280,22 +306,30 @@ function UsersTab({ currentUserId }) {
     try {
       const r = await api.resetUserPassword(id);
       const tempPw = (r && r.tempPassword) || '';
+      let copied = false;
       try {
         if (navigator && navigator.clipboard && navigator.clipboard.writeText) {
           await navigator.clipboard.writeText(tempPw);
+          copied = true;
         }
       } catch {}
       logActivity('ok', `reset ${loginId}`);
-      // window.prompt gives the admin a guaranteed selectable copy surface.
-      if (typeof window !== 'undefined' && window.prompt) {
-        window.prompt(`รหัสชั่วคราวของ ${loginId} (Ctrl+C เพื่อคัดลอก):`, tempPw);
-      } else {
-        nativeAlert(`รหัสชั่วคราวของ ${loginId}: ${tempPw}`);
-      }
+      setReveal({
+        title: `รหัสผ่านชั่วคราวของ ${loginId}`,
+        body: tempPw,
+        copyable: true,
+        note: copied
+          ? 'คัดลอกเข้าคลิปบอร์ดให้แล้ว · ไม่แสดงซ้ำอีกหลังปิดหน้านี้'
+          : 'กดปุ่ม "คัดลอก" เพื่อนำไปส่งให้ผู้ใช้ · ไม่แสดงซ้ำอีกหลังปิดหน้านี้',
+      });
       await load();
     } catch (e) {
       logActivity('fail', `resetPw · ${e.message || '?'}`);
-      nativeAlert('ล้มเหลว: ' + friendlyUserActionError(e.message) + '\n(' + (e.message || '?') + ')');
+      setReveal({
+        title: 'รีเซ็ตรหัสไม่สำเร็จ',
+        body: friendlyUserActionError(e.message) + '\n(' + (e.message || '?') + ')',
+        tone: 'error',
+      });
     } finally { setBusyId(''); }
   };
 
@@ -425,6 +459,69 @@ function UsersTab({ currentUserId }) {
           <button onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={page === totalPages} style={pillBtn}>ถัดไป</button>
         </div>
       )}
+
+      {reveal && <RevealModal {...reveal} onClose={() => setReveal(null)}/>}
+    </div>
+  );
+}
+
+// Always-visible modal for revealing secrets / showing an action result.
+// Works in Capacitor WebView where window.prompt is blocked.
+function RevealModal({ title, body, tone = 'default', note, copyable = false, onClose }) {
+  const copy = async () => {
+    try {
+      if (navigator?.clipboard?.writeText) { await navigator.clipboard.writeText(body); toast.success('คัดลอกแล้ว'); return; }
+    } catch {}
+    // Fallback
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = body; ta.style.position = 'fixed'; ta.style.top = '-9999px';
+      document.body.appendChild(ta); ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+      toast.success('คัดลอกแล้ว');
+    } catch { toast.error('คัดลอกไม่สำเร็จ — เลือกข้อความแล้ว Ctrl+C เอา'); }
+  };
+  return (
+    <div onClick={e => e.target === e.currentTarget && onClose?.()} style={{
+      position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 1800,
+      display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20,
+      fontFamily: '"IBM Plex Sans Thai", system-ui',
+    }}>
+      <div style={{
+        width: 420, maxWidth: '100%', background: '#fff', borderRadius: 14, padding: 22,
+        boxShadow: '0 40px 80px -20px rgba(0,0,0,0.5)',
+        animation: 'toastIn 220ms cubic-bezier(0.2,0.8,0.3,1) both',
+      }}>
+        <div style={{
+          fontSize: 15, fontWeight: 700, marginBottom: 10,
+          color: tone === 'error' ? '#B4463A' : '#1F1B17',
+        }}>{title}</div>
+        <div style={{
+          background: tone === 'error' ? 'rgba(180,70,58,0.06)' : '#F3EFE7',
+          border: '1px solid rgba(0,0,0,0.06)', borderRadius: 10,
+          padding: '12px 14px', marginBottom: 12,
+          fontFamily: copyable ? 'ui-monospace, monospace' : 'inherit',
+          fontSize: copyable ? 16 : 13, fontWeight: copyable ? 600 : 400,
+          letterSpacing: copyable ? 1 : 0,
+          wordBreak: 'break-all', userSelect: 'all',
+          whiteSpace: 'pre-wrap',
+        }}>{body}</div>
+        {note && <div style={{ fontSize: 11, color: '#6B6458', lineHeight: 1.5, marginBottom: 14 }}>{note}</div>}
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+          {copyable && (
+            <button onClick={copy} style={{
+              padding: '9px 16px', borderRadius: 8, border: '1px solid rgba(0,0,0,0.12)',
+              background: '#fff', fontFamily: 'inherit', fontSize: 13, cursor: 'pointer',
+            }}>📋 คัดลอก</button>
+          )}
+          <button onClick={onClose} style={{
+            padding: '9px 20px', borderRadius: 8, border: 'none',
+            background: '#1F1B17', color: '#fff',
+            fontFamily: 'inherit', fontSize: 13, fontWeight: 600, cursor: 'pointer',
+          }}>ปิด</button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -443,19 +540,44 @@ function AddAdminDialog({ onClose, onCreated }) {
   const [role, setRole] = React.useState('editor');
   const [busy, setBusy] = React.useState(false);
   const [err, setErr] = React.useState(null);
+  const [suggestions, setSuggestions] = React.useState([]);
+  const [showPassword, setShowPassword] = React.useState(false);
+  // When admin generates a random pw, we offer a copy/reveal surface.
+  const [generated, setGenerated] = React.useState('');
+
+  const generatePassword = () => {
+    // 20 chars from a 72-char alphabet — ~123 bits of entropy, definitely
+    // passes zxcvbn ≥ 3 and is unlikely to be in HIBP.
+    const alph = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789!@#$%^&*?';
+    const bytes = new Uint8Array(20);
+    (crypto || window.crypto).getRandomValues(bytes);
+    let out = '';
+    for (const b of bytes) out += alph[b % alph.length];
+    setPassword(out);
+    setGenerated(out);
+    setShowPassword(true);
+    setErr(null); setSuggestions([]);
+  };
 
   const submit = async (e) => {
     e.preventDefault();
-    setErr(null);
+    setErr(null); setSuggestions([]);
     if (!/^[a-zA-Z0-9._@-]{3,64}$/.test(loginId)) { setErr('Login ID 3-64 ตัว a-z 0-9 . _ - @'); return; }
-    if (password.length < 12) { setErr('รหัสอย่างน้อย 12 ตัว'); return; }
+    if (password.length < 12) { setErr('รหัสอย่างน้อย 12 ตัว · ลองกด "สร้างรหัสแข็งแรง"'); return; }
     setBusy(true);
     try {
       await api.createUser({ loginId: loginId.toLowerCase(), password, role, email: email || '', displayName: displayName || '' });
-      toast.success('สร้างบัญชีใหม่แล้ว');
+      toast.success('สร้างบัญชี ' + loginId + ' แล้ว');
       onCreated?.();
-    } catch (e) { setErr(friendlyCreateError(e.message)); }
-    finally { setBusy(false); setPassword(''); }
+    } catch (e) {
+      // The backend returns { error, suggestions[] } for weak_password —
+      // surface those to the admin so they know what to change.
+      setErr(friendlyCreateError(e.message));
+      if (e.responseBody && Array.isArray(e.responseBody.suggestions)) {
+        setSuggestions(e.responseBody.suggestions);
+      }
+    }
+    finally { setBusy(false); }
   };
 
   return (
@@ -483,9 +605,32 @@ function AddAdminDialog({ onClose, onCreated }) {
           <input type="email" value={email} onChange={e => setEmail(e.target.value.slice(0, 254))}
             placeholder="editor1@example.com" style={pwInput}/>
         </Field>
-        <Field label="รหัสผ่าน (อย่างน้อย 12 ตัว, ผ่านนโยบาย)">
-          <input type="password" value={password} onChange={e => setPassword(e.target.value.slice(0, 200))}
-            required minLength={12} maxLength={200} style={pwInput}/>
+        <Field label="รหัสผ่าน (อย่างน้อย 12 ตัว · ต้องผ่าน zxcvbn + HIBP)">
+          <div style={{ display: 'flex', gap: 6 }}>
+            <input type={showPassword ? 'text' : 'password'}
+              value={password}
+              onChange={e => setPassword(e.target.value.slice(0, 200))}
+              required minLength={12} maxLength={200}
+              style={{ ...pwInput, flex: 1, fontFamily: showPassword ? 'ui-monospace, monospace' : 'inherit' }}/>
+            <button type="button" onClick={() => setShowPassword(s => !s)}
+              title={showPassword ? 'ซ่อน' : 'แสดง'} style={{
+              padding: '0 12px', borderRadius: 9, border: '1px solid rgba(0,0,0,0.12)',
+              background: '#fff', cursor: 'pointer', fontSize: 16,
+            }}>{showPassword ? '🙈' : '👁'}</button>
+            <button type="button" onClick={generatePassword}
+              title="สร้างรหัสสุ่ม 20 ตัวที่ผ่านนโยบายแน่นอน" style={{
+              padding: '0 12px', borderRadius: 9, border: '1px solid rgba(0,0,0,0.12)',
+              background: '#F3EFE7', cursor: 'pointer', fontSize: 13, whiteSpace: 'nowrap',
+            }}>🎲 สร้าง</button>
+          </div>
+          {generated && (
+            <div style={{
+              marginTop: 6, padding: '8px 10px', borderRadius: 7,
+              background: 'rgba(6,199,85,0.08)', color: '#058850', fontSize: 11,
+            }}>
+              ✓ สร้างรหัสสุ่ม 20 ตัว · จดหรือคัดลอกก่อนกด "สร้างบัญชี" · ผู้ใช้จะถูกบังคับเปลี่ยนตอน login ครั้งแรก (ถ้าต้องการ)
+            </div>
+          )}
         </Field>
         <Field label="สิทธิ์">
           <select value={role} onChange={e => setRole(e.target.value)} style={pwInput}>
@@ -493,7 +638,16 @@ function AddAdminDialog({ onClose, onCreated }) {
             <option value="admin">Admin — แก้คอนเทนต์ + จัดการผู้ใช้ + ดู audit</option>
           </select>
         </Field>
-        {err && <div style={{ padding: '8px 12px', borderRadius: 8, background: 'rgba(180,70,58,0.08)', color: '#B4463A', fontSize: 12, marginBottom: 12 }}>{err}</div>}
+        {err && (
+          <div style={{ padding: '8px 12px', borderRadius: 8, background: 'rgba(180,70,58,0.08)', color: '#B4463A', fontSize: 12, marginBottom: 8 }}>
+            {err}
+            {suggestions.length > 0 && (
+              <ul style={{ margin: '6px 0 0 16px', padding: 0 }}>
+                {suggestions.map((s, i) => <li key={i} style={{ fontSize: 11, opacity: 0.85 }}>{s}</li>)}
+              </ul>
+            )}
+          </div>
+        )}
         <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 8 }}>
           <button type="button" onClick={onClose} disabled={busy} style={{
             padding: '9px 16px', borderRadius: 8, border: '1px solid rgba(0,0,0,0.12)',

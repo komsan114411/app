@@ -43,3 +43,4 @@ pids/
 
 # local-only design work
 _design_source/
+log.md
