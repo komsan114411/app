@@ -92,6 +92,27 @@ publicRouter.get('/install/:token/config', publicReadLimiter, async (req, res) =
   });
 });
 
+// ─── Admin access gate ──────────────────────────────────────────
+// Verifies a caller-supplied token against AppConfig.adminAccessToken.current
+// Only the CURRENT token is accepted — rotating in the admin panel
+// immediately blocks every previously shared admin URL. Returning 410
+// (instead of 404) lets the frontend show a distinct "expired" message.
+publicRouter.get('/admin-gate/:token', publicReadLimiter, async (req, res) => {
+  const token = String(req.params.token || '').slice(0, 80);
+  if (!token) return res.status(400).json({ error: 'invalid_token' });
+  const cfg = await getAppConfig();
+  const current = cfg.adminAccessToken?.current;
+  if (!current) return res.status(410).json({ error: 'not_issued' });
+  // Constant-time compare
+  const a = Buffer.from(token); const b = Buffer.from(current);
+  if (a.length !== b.length) return res.status(410).json({ error: 'expired' });
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a[i] ^ b[i];
+  if (diff !== 0) return res.status(410).json({ error: 'expired' });
+  res.set('Cache-Control', 'no-store');
+  res.json({ ok: true });
+});
+
 publicRouter.post('/privacy/forget', publicReadLimiter, async (req, res) => {
   const ipHash = hashIp(req.ip);
   if (!ipHash) return res.status(204).end();

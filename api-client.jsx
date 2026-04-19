@@ -123,6 +123,9 @@ const api = {
   async rotateInstallToken()  { return request('/api/admin/install-token/rotate', { method: 'POST', auth: true }); },
   async revokeInstallToken()  { return request('/api/admin/install-token/revoke', { method: 'POST', auth: true }); },
   async getInstallConfig(token) { return request(`/api/install/${encodeURIComponent(token)}/config`); },
+  async verifyAdminGate(token)  { return request(`/api/admin-gate/${encodeURIComponent(token)}`); },
+  async getAdminToken()         { return request('/api/admin/admin-token', { auth: true }); },
+  async rotateAdminToken()      { return request('/api/admin/admin-token/rotate', { method: 'POST', auth: true }); },
   async getAnalytics()             { return request('/api/admin/analytics', { auth: true }); },
   async getButtonAnalytics(id)     { return request(`/api/admin/analytics/button/${encodeURIComponent(id)}`, { auth: true }); },
   async getAudit(opts = {}) {

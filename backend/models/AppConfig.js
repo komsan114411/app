@@ -44,7 +44,19 @@ const DownloadLinksSchema = new mongoose.Schema({
 // carrying that token serve the install dashboard. Regenerating invalidates
 // every previously issued link instantly. No permanent /install URL exists.
 const InstallTokenSchema = new mongoose.Schema({
-  current:    { type: String, default: '', maxlength: 64 },  // the active token (base64url)
+  current:    { type: String, default: '', maxlength: 64 },
+  rotatedAt:  { type: Date, default: null },
+  rotatedBy:  { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+  rotationCount: { type: Number, default: 0 },
+}, { _id: false });
+
+// Rotating admin-access token. The /admin/<token> URL is the ONLY way to
+// reach the admin login form — the main user page has no "เข้าหลังบ้าน"
+// button. Admin rotates the token in the console any time the URL leaks
+// or after onboarding a new person. Seed.js bootstraps this with a random
+// value printed to the boot log so the first operator has an access URL.
+const AdminAccessTokenSchema = new mongoose.Schema({
+  current:    { type: String, default: '', maxlength: 64 },
   rotatedAt:  { type: Date, default: null },
   rotatedBy:  { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
   rotationCount: { type: Number, default: 0 },
@@ -71,6 +83,9 @@ const AppConfigSchema = new mongoose.Schema({
 
   // Rotating install-link token — see InstallTokenSchema comment
   installToken: { type: InstallTokenSchema, default: () => ({}) },
+
+  // Rotating admin-access URL token — see AdminAccessTokenSchema comment
+  adminAccessToken: { type: AdminAccessTokenSchema, default: () => ({}) },
 
   updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
 }, { timestamps: true, optimisticConcurrency: true });

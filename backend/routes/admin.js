@@ -434,6 +434,40 @@ adminRouter.post('/install-token/revoke', adminWriteLimiter, requireRole('admin'
   res.json({ ok: true });
 });
 
+// ── Admin-access token ──────────────────────────────────────
+// Rotates the URL that end-users must hit to even SEE the admin login
+// form. Mirrors install-token but for the admin surface.
+adminRouter.get('/admin-token', requireRole('admin'), async (req, res) => {
+  const cfg = await getAppConfig();
+  res.json({
+    current: cfg.adminAccessToken?.current || '',
+    rotatedAt: cfg.adminAccessToken?.rotatedAt || null,
+    rotationCount: cfg.adminAccessToken?.rotationCount || 0,
+  });
+});
+
+adminRouter.post('/admin-token/rotate', adminWriteLimiter, requireRole('admin'), async (req, res) => {
+  const token = crypto.randomBytes(18).toString('base64url');
+  const cfg = await getAppConfig();
+  cfg.adminAccessToken = {
+    current: token,
+    rotatedAt: new Date(),
+    rotatedBy: req.user.id,
+    rotationCount: (cfg.adminAccessToken?.rotationCount || 0) + 1,
+  };
+  await cfg.save();
+  invalidateConfigCache();
+  await AuditLog.create({
+    actorId: req.user.id, actorEmail: req.user.loginId,
+    action: 'admin_token_rotate',
+    target: 'AppConfig:adminAccessToken',
+    ipHash: hashIp(req.ip), userAgent: safeText(req.get('user-agent') || '', 200),
+    diff: { rotationCount: cfg.adminAccessToken.rotationCount },
+  });
+  log.warn({ token: token.slice(0, 4) + '***' }, 'admin_token_rotated');
+  res.json({ token, url: `/admin/${token}`, rotatedAt: cfg.adminAccessToken.rotatedAt });
+});
+
 // List recent APK uploads so the admin can reuse / rotate old versions.
 adminRouter.get('/uploads/apks', requireRole('admin'), async (req, res) => {
   const rows = await MediaAsset.find({ kind: 'apk' }, { data: 0 })

@@ -29,7 +29,9 @@ export const ALLOWED = Object.freeze({
 
 const SAFE_URL_RE = /^(https?:\/\/|tel:|mailto:|line:\/\/|fb-messenger:\/\/|whatsapp:\/\/)[^\s<>"'`]*$/i;
 const RELATIVE_UPLOAD_RE = /^\/uploads\/[a-f0-9]{24}\.(jpe?g|png|webp|gif)$/i;
-const RELATIVE_MEDIA_RE  = /^\/media\/[a-f0-9]{12,64}\.(jpe?g|png|webp|gif)$/i;
+// Accept .apk too so admin-uploaded Android packages (served from MediaAsset
+// via GET /media/:id.apk) can be referenced in downloadLinks.android.
+const RELATIVE_MEDIA_RE  = /^\/media\/[a-f0-9]{12,64}\.(jpe?g|png|webp|gif|apk)$/i;
 
 export function safeUrl(u) {
   if (typeof u !== 'string') return '';

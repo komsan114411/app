@@ -208,12 +208,17 @@ function useIdleLogout(onTimeout, timeoutMs = 30 * 60_000, active = true) {
   }, [onTimeout, timeoutMs, active]);
 }
 
-function App() {
+function App({ adminUnlocked = false } = {}) {
   const [state, setState] = useState(DEFAULT_STATE);
   const [liveMode, setLiveMode] = useState(false);
   const [authed, setAuthed] = useState(false);
   const [me, setMe] = useState(null);
   const [bootError, setBootError] = useState(null);
+  // In liveMode, the admin toolbar / toggle is ONLY shown when the user
+  // arrived via the /admin/:token URL (adminUnlocked). Without the token
+  // the user sees only the public app. In demo mode (no API_BASE) the
+  // toolbar is always visible so design/dev still works.
+  const adminAccessAllowed = !liveMode || adminUnlocked;
 
   // On boot in live mode, if refresh cookie is valid we'll be authed.
   // Fetch /me to hydrate role + mustChangePassword after page reload.
@@ -298,6 +303,9 @@ function App() {
   }, [state, liveMode]);
 
   const [view, setView] = useState(() => {
+    // Admin arrived via /admin/:token URL → default them straight into the
+    // admin console instead of the user preview.
+    if (adminUnlocked) return 'admin';
     try { return localStorage.getItem('view') || TWEAKS.defaultView || 'user'; }
     catch { return TWEAKS.defaultView || 'user'; }
   });
@@ -306,6 +314,9 @@ function App() {
   // Dual-view needs ~1280px horizontally. On narrower screens default to the
   // tab the user picked (defaultView) so they don't land on a blank-looking page.
   const [showBoth, setShowBoth] = useState(() => {
+    // When the admin arrives via /admin/:token they want to work — not
+    // look at the user preview side-by-side — so dual-view is off.
+    if (adminUnlocked) return false;
     if (typeof window === 'undefined') return !!TWEAKS.showAllScreens;
     const wide = window.innerWidth >= 1280;
     return !!TWEAKS.showAllScreens && wide;
@@ -445,26 +456,30 @@ function App() {
         )}
       </div>
 
-      <div className="toolbar" role="tablist">
-        <button
-          className={!showBoth && view === 'user' ? 'active' : ''}
-          onClick={() => { setShowBoth(false); setView('user'); setTweak({ showAllScreens: false, defaultView: 'user' }); }}>
-          <span style={{ fontSize: 14 }}>📱</span> หน้าผู้ใช้
-        </button>
-        <button
-          className={!showBoth && view === 'admin' ? 'active' : ''}
-          onClick={() => { setShowBoth(false); setView('admin'); setTweak({ showAllScreens: false, defaultView: 'admin' }); }}>
-          <span style={{ fontSize: 14 }}>🖥</span> หลังบ้าน
-        </button>
-        <button
-          className={showBoth ? 'active' : ''}
-          onClick={() => { setShowBoth(true); setTweak({ showAllScreens: true }); }}>
-          <span style={{ fontSize: 14 }}>⇌</span> ทั้งสองหน้า
-        </button>
-      </div>
+      {adminAccessAllowed ? (
+        <div className="toolbar" role="tablist">
+          <button
+            className={!showBoth && view === 'user' ? 'active' : ''}
+            onClick={() => { setShowBoth(false); setView('user'); setTweak({ showAllScreens: false, defaultView: 'user' }); }}>
+            <span style={{ fontSize: 14 }}>📱</span> หน้าผู้ใช้
+          </button>
+          <button
+            className={!showBoth && view === 'admin' ? 'active' : ''}
+            onClick={() => { setShowBoth(false); setView('admin'); setTweak({ showAllScreens: false, defaultView: 'admin' }); }}>
+            <span style={{ fontSize: 14 }}>🖥</span> หลังบ้าน
+          </button>
+          <button
+            className={showBoth ? 'active' : ''}
+            onClick={() => { setShowBoth(true); setTweak({ showAllScreens: true }); }}>
+            <span style={{ fontSize: 14 }}>⇌</span> ทั้งสองหน้า
+          </button>
+        </div>
+      ) : null}
 
-      <div className="views" key={showBoth ? 'both' : view}>
-        {showBoth ? (<>{userView}{adminView}</>) : (view === 'user' ? userView : adminView)}
+      <div className="views" key={adminAccessAllowed ? (showBoth ? 'both' : view) : 'user'}>
+        {adminAccessAllowed
+          ? (showBoth ? (<>{userView}{adminView}</>) : (view === 'user' ? userView : adminView))
+          : userView /* liveMode without admin token — no admin surface exposed */}
       </div>
 
       {liveMode && typeof ConsentBanner === 'function' && <ConsentBanner/>}
@@ -518,13 +533,22 @@ function App() {
   );
 }
 
-// Standalone install landing page at /install — admin shares this URL
-// with end-users who need to install the Android app. Skips the full
-// SPA (no toolbar, no dual view) and renders a dedicated dashboard.
+// Routing:
+//   /install/:token       → InstallPage (public, token-gated)
+//   /admin/:token         → App in "admin unlocked" mode (token-gated)
+//   everything else       → App in user-only mode (no admin button)
+// The main user URL never exposes an "เข้าหลังบ้าน" button to random
+// visitors. The admin must use the token URL that was generated in the
+// admin console (or printed to the boot log on first deploy).
 function Root() {
   const path = (typeof location !== 'undefined' ? location.pathname : '/').replace(/\/+$/, '') || '/';
   const qs = (typeof location !== 'undefined' ? new URLSearchParams(location.search) : null);
   const installMode = /^\/(install|download)(\/|$)/.test(path) || (qs && qs.get('page') === 'install');
+
+  // Extract admin token from /admin/:token URL
+  const adminTokenMatch = path.match(/^\/admin\/([A-Za-z0-9_-]{8,64})$/);
+  const adminToken = adminTokenMatch ? adminTokenMatch[1] : '';
+  const adminGateRequested = !!adminToken || path === '/admin' || (qs && qs.get('admin'));
 
   if (installMode && typeof InstallPage === 'function') {
     return (
@@ -535,12 +559,93 @@ function Root() {
       </ErrorBoundary>
     );
   }
+
+  if (adminGateRequested) {
+    return (
+      <ErrorBoundary>
+        <AdminGate token={adminToken}/>
+        {typeof ToastContainer === 'function' && <ToastContainer/>}
+        {typeof OnlineIndicator === 'function' && <OnlineIndicator/>}
+      </ErrorBoundary>
+    );
+  }
+
   return (
     <ErrorBoundary>
       <App />
       {typeof ToastContainer === 'function' && <ToastContainer/>}
       {typeof OnlineIndicator === 'function' && <OnlineIndicator/>}
     </ErrorBoundary>
+  );
+}
+
+// Verifies the admin token via the backend gate. On success, swaps in
+// the full App component but with adminUnlocked=true so the UI shows
+// the toolbar and (if liveMode) routes the user straight to the login
+// form. Without a valid token the visitor sees a friendly "expired"
+// page — nothing about admin existence leaks.
+function AdminGate({ token }) {
+  const [status, setStatus] = useState('loading');  // loading | ok | expired | no_token
+
+  useEffect(() => {
+    if (!token) { setStatus('no_token'); return; }
+    let cancelled = false;
+    (async () => {
+      try {
+        await api.verifyAdminGate(token);
+        if (!cancelled) setStatus('ok');
+      } catch (e) {
+        if (cancelled) return;
+        if (['expired', 'not_issued', 'invalid_token'].includes(e.message) || e.status === 410) setStatus('expired');
+        else setStatus('expired');
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [token]);
+
+  if (status === 'loading') return <AdminGateScreen icon="⏳" title="กำลังตรวจสอบ…" tone="info"/>;
+  if (status === 'no_token' || status === 'expired') {
+    return <AdminGateScreen icon="🔒"
+      title={status === 'no_token' ? 'ไม่มีสิทธิ์เข้าถึงหน้านี้' : 'ลิงก์ Admin หมดอายุ'}
+      body={status === 'no_token'
+        ? 'หน้านี้ต้องมีลิงก์ที่ถูกต้องจากแอดมินเท่านั้น'
+        : 'ลิงก์ถูกยกเลิกแล้ว ติดต่อแอดมินเพื่อขอลิงก์ใหม่'}
+      tone="warn"/>;
+  }
+
+  // Valid → render full App with admin unlocked
+  return <App adminUnlocked={true}/>;
+}
+
+function AdminGateScreen({ icon, title, body, tone = 'warn' }) {
+  return (
+    <div style={{
+      minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center',
+      padding: 20, background: 'linear-gradient(180deg, #FBFAF7 0%, #F3EFE7 100%)',
+      fontFamily: '"IBM Plex Sans Thai", system-ui',
+    }}>
+      <div style={{
+        maxWidth: 400, width: '100%', background: '#fff',
+        padding: 'clamp(24px, 5vw, 36px)', borderRadius: 18,
+        border: '1px solid rgba(0,0,0,0.06)', textAlign: 'center',
+        boxShadow: '0 20px 60px -20px rgba(0,0,0,0.15)',
+      }}>
+        <div style={{
+          width: 64, height: 64, borderRadius: '50%',
+          background: tone === 'info' ? '#F3EFE7' : 'rgba(210,150,40,0.15)',
+          color: tone === 'info' ? '#6B6458' : '#7A5A10',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          fontSize: 28, margin: '0 auto 14px',
+        }}>{icon}</div>
+        <div style={{ fontSize: 17, fontWeight: 700, marginBottom: 8 }}>{title}</div>
+        {body && <div style={{ fontSize: 13, color: '#6B6458', lineHeight: 1.6, marginBottom: 18 }}>{body}</div>}
+        <a href="/" style={{
+          display: 'inline-block', padding: '9px 20px', borderRadius: 9,
+          background: '#1F1B17', color: '#fff', textDecoration: 'none',
+          fontSize: 13, fontWeight: 500,
+        }}>← กลับหน้าหลัก</a>
+      </div>
+    </div>
   );
 }
 

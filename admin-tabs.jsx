@@ -153,6 +153,10 @@ function SecurityTab({ onLogout, mustChange = false, onPasswordChanged, me, onMe
         <PushBroadcastCard/>
       )}
 
+      {!mustChange && me?.role === 'admin' && typeof AdminAccessTokenCard === 'function' && (
+        <AdminAccessTokenCard/>
+      )}
+
       {!mustChange && typeof SessionList === 'function' && (
         <SessionList/>
       )}

@@ -254,3 +254,153 @@ function InstallLinkShareCard({ dl }) {
 }
 
 window.InstallLinkShareCard = InstallLinkShareCard;
+
+// ─── AdminAccessTokenCard ──────────────────────────────────────
+// Controls the rotating /admin/<token> URL. Shown in SecurityTab so
+// only authenticated admins can rotate it. Same arm-to-confirm pattern
+// as InstallLinkShareCard — accidental clicks don't kill the token.
+function AdminAccessTokenCard() {
+  const [token, setToken] = React.useState('');
+  const [rotatedAt, setRotatedAt] = React.useState(null);
+  const [rotationCount, setRotationCount] = React.useState(0);
+  const [loading, setLoading] = React.useState(true);
+  const [busy, setBusy] = React.useState(false);
+  const [showQr, setShowQr] = React.useState(false);
+  const [armed, setArmed] = React.useState(false);
+  const armTimer = React.useRef(null);
+  React.useEffect(() => () => clearTimeout(armTimer.current), []);
+
+  const origin = typeof location !== 'undefined' ? location.origin : 'https://your-domain';
+  const adminUrl = token ? `${origin}/admin/${token}` : '';
+
+  const load = React.useCallback(async () => {
+    setLoading(true);
+    try {
+      const r = await api.getAdminToken();
+      setToken(r.current || '');
+      setRotatedAt(r.rotatedAt);
+      setRotationCount(r.rotationCount || 0);
+    } catch {}
+    finally { setLoading(false); }
+  }, []);
+  React.useEffect(() => { load(); }, [load]);
+
+  const rotate = async () => {
+    if (!armed) {
+      setArmed(true);
+      clearTimeout(armTimer.current);
+      armTimer.current = setTimeout(() => setArmed(false), 3000);
+      return;
+    }
+    setArmed(false); clearTimeout(armTimer.current);
+    setBusy(true);
+    try {
+      const r = await api.rotateAdminToken();
+      setToken(r.token); setRotatedAt(r.rotatedAt); setRotationCount(c => c + 1);
+      if (typeof toast !== 'undefined') toast.success('สร้าง Admin URL ใหม่แล้ว — URL เก่าใช้ไม่ได้แล้ว');
+    } catch (e) {
+      if (typeof toast !== 'undefined') toast.error('สร้างไม่สำเร็จ: ' + (e.message || 'unknown'));
+    } finally { setBusy(false); }
+  };
+
+  const copy = async (url) => {
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(url);
+        if (typeof toast !== 'undefined') toast.success('คัดลอก URL แล้ว');
+        return;
+      }
+    } catch {}
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = url; document.body.appendChild(ta); ta.select();
+      document.execCommand('copy'); document.body.removeChild(ta);
+      if (typeof toast !== 'undefined') toast.success('คัดลอก URL แล้ว');
+    } catch {
+      if (typeof toast !== 'undefined') toast.error('คัดลอกไม่สำเร็จ');
+    }
+  };
+
+  if (loading) return null;
+
+  return (
+    <Card style={{ padding: 18, marginBottom: 14, border: '2px solid rgba(180,70,58,0.25)', background: 'linear-gradient(135deg, #FBFAF7, rgba(180,70,58,0.04))' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10, flexWrap: 'wrap' }}>
+        <div style={{ fontSize: 18 }}>🔐</div>
+        <div style={{ flex: 1, minWidth: 180 }}>
+          <div style={{ fontSize: 14, fontWeight: 700 }}>Admin Access URL (หมุนได้)</div>
+          <div style={{ fontSize: 11, color: '#6B6458', marginTop: 2, lineHeight: 1.5 }}>
+            หน้า admin login เข้าได้เฉพาะ URL ที่มีโทเคนนี้เท่านั้น · คนอื่นเข้า `/` ไม่มีปุ่มไปหน้า admin
+          </div>
+        </div>
+        <span style={{
+          padding: '3px 10px', borderRadius: 999, fontSize: 10, fontWeight: 600,
+          background: token ? 'rgba(6,199,85,0.15)' : 'rgba(210,150,40,0.2)',
+          color: token ? '#058850' : '#7A5A10',
+        }}>{token ? '● ใช้งานอยู่' : 'ยังไม่มี'}</span>
+      </div>
+
+      {token && (
+        <>
+          <div style={{
+            padding: '10px 12px', borderRadius: 10, background: '#fff',
+            border: '1px solid rgba(0,0,0,0.06)', marginBottom: 10,
+            fontSize: 12, fontFamily: 'ui-monospace, monospace',
+            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+            color: '#058850',
+          }}>{adminUrl}</div>
+          <div style={{ fontSize: 10, color: '#8F877C', marginBottom: 12 }}>
+            สร้างล่าสุด: {rotatedAt ? new Date(rotatedAt).toLocaleString('th-TH') : '—'}
+            {' · '}สร้างไปแล้ว {rotationCount} ครั้ง
+          </div>
+        </>
+      )}
+
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+        <button onClick={rotate} disabled={busy} style={{
+          padding: '9px 16px', borderRadius: 9, border: 'none',
+          background: armed ? '#B4463A' : '#7A5A10', color: '#fff',
+          fontFamily: 'inherit', fontSize: 13, fontWeight: 600,
+          cursor: busy ? 'wait' : 'pointer',
+        }}>
+          {busy ? '...' : armed ? '✓ ยืนยัน — URL เก่าจะใช้ไม่ได้?' : '🔄 สร้าง Admin URL ใหม่'}
+        </button>
+        {token && (
+          <>
+            <button onClick={() => copy(adminUrl)} style={{
+              padding: '9px 14px', borderRadius: 9, border: '1px solid rgba(0,0,0,0.12)',
+              background: '#fff', fontFamily: 'inherit', fontSize: 13, cursor: 'pointer',
+            }}>📋 คัดลอก</button>
+            <button onClick={() => setShowQr(s => !s)} style={{
+              padding: '9px 14px', borderRadius: 9, border: '1px solid rgba(0,0,0,0.12)',
+              background: '#fff', fontFamily: 'inherit', fontSize: 13, cursor: 'pointer',
+            }}>{showQr ? 'ซ่อน QR' : '📱 QR'}</button>
+          </>
+        )}
+      </div>
+
+      {showQr && token && typeof QrSvg === 'function' && (
+        <div style={{
+          marginTop: 14, padding: 14, borderRadius: 12,
+          background: '#fff', border: '1px solid rgba(0,0,0,0.06)',
+          display: 'flex', gap: 14, alignItems: 'center', flexWrap: 'wrap',
+        }}>
+          <QrSvg text={adminUrl} size={150}/>
+          <div style={{ flex: 1, minWidth: 160, fontSize: 11, color: '#6B6458', lineHeight: 1.55 }}>
+            สแกนจากมือถือเพื่อเข้า admin จากเครื่องอื่น · <strong>QR นี้หมดอายุทันทีเมื่อสร้างใหม่</strong>
+          </div>
+        </div>
+      )}
+
+      <div style={{
+        marginTop: 12, padding: '10px 12px', borderRadius: 9,
+        background: 'rgba(0,0,0,0.04)', fontSize: 11, color: '#6B6458', lineHeight: 1.6,
+      }}>
+        <strong>⚠ สำคัญ:</strong> บุ๊คมาร์ค URL นี้ไว้ · ถ้ากด "สร้างใหม่" คุณจะต้องใช้ URL ใหม่ในการเข้า admin ครั้งถัดไป
+        · URL ที่ส่งให้คนอื่นก่อนหน้านี้ทั้งหมดจะใช้ไม่ได้ทันที
+      </div>
+    </Card>
+  );
+}
+
+window.AdminAccessTokenCard = AdminAccessTokenCard;

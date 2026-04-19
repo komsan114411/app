@@ -373,13 +373,39 @@ async function ensureBootstrapped() {
 
     // ── Normal first-boot auto-seed ────────────────────────────────────
     const adminCount = await User.countDocuments({ role: 'admin' });
-    if (adminCount > 0) return;
-    const loginId = (env.ADMIN_LOGIN_ID || 'admin123').toLowerCase();
-    const password = env.ADMIN_PASSWORD || 'admin123';
-    const u = new User({ loginId, role: 'admin', mustChangePassword: true });
-    await u.setPasswordUnsafe(password);
-    await u.save();
-    log.warn({ loginId }, '🔐 auto-seeded first admin — MUST change the default password on first login');
+    if (adminCount === 0) {
+      const loginId = (env.ADMIN_LOGIN_ID || 'admin123').toLowerCase();
+      const password = env.ADMIN_PASSWORD || 'admin123';
+      const u = new User({ loginId, role: 'admin', mustChangePassword: true });
+      await u.setPasswordUnsafe(password);
+      await u.save();
+      log.warn({ loginId }, '🔐 auto-seeded first admin — MUST change the default password on first login');
+    }
+
+    // ── Admin-access URL token ─────────────────────────────────────────
+    // The /admin/<token> URL is the ONLY way to reach the admin login
+    // form. If no token exists yet (fresh DB) generate one and log it
+    // prominently so the operator can copy it from Railway/Render logs.
+    const { default: crypto } = await import('node:crypto');
+    const cfg = await getAppConfig();
+    if (!cfg.adminAccessToken?.current) {
+      const token = crypto.randomBytes(18).toString('base64url');
+      cfg.adminAccessToken = {
+        current: token,
+        rotatedAt: new Date(),
+        rotationCount: 1,
+      };
+      await cfg.save();
+      const line = '═'.repeat(60);
+      console.log('\n' + line);
+      console.log('  🔐  ADMIN ACCESS URL  (save this — your only way in)');
+      console.log('');
+      console.log('      /admin/' + token);
+      console.log('');
+      console.log('  Full URL:  <your-domain>/admin/' + token);
+      console.log('  Rotate anytime from admin console (ความปลอดภัย tab)');
+      console.log(line + '\n');
+    }
   } catch (e) {
     log.error({ err: e.message }, 'bootstrap_admin_failed');
   }

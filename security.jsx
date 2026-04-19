@@ -23,7 +23,9 @@ const ALLOWED_THEMES   = ['cream','sage','midnight','sunset'];
 // URL scheme whitelist. NOTE: explicitly blocks javascript:, data:, file:, blob:, vbscript:
 const SAFE_URL_RE = /^(https?:\/\/|tel:|mailto:|line:\/\/|fb-messenger:\/\/|whatsapp:\/\/)[^\s<>"'`]*$/i;
 const RELATIVE_UPLOAD_RE = /^\/uploads\/[a-f0-9]{24}\.(jpe?g|png|webp|gif)$/i;
-const RELATIVE_MEDIA_RE  = /^\/media\/[a-f0-9]{12,64}\.(jpe?g|png|webp|gif)$/i;
+// Media paths accept images AND .apk so admin-uploaded Android packages
+// work in download-links.android. Server's sanitize.js mirrors this.
+const RELATIVE_MEDIA_RE  = /^\/media\/[a-f0-9]{12,64}\.(jpe?g|png|webp|gif|apk)$/i;
 
 // ─── URL validator ──────────────────────────────────────────────
 // Returns the trimmed URL if safe, else '' (drop silently).
