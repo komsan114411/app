@@ -248,7 +248,12 @@ app.get('/media/:id', async (req, res) => {
   res.setHeader('Content-Length', String(asset.size || asset.data.length));
   res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
   res.setHeader('X-Content-Type-Options', 'nosniff');
-  res.setHeader('Cross-Origin-Resource-Policy', 'same-site');
+  // cross-origin (not same-site) so the Capacitor WebView on
+  // https://localhost can render banners + app icon from the Railway
+  // origin. Content-Type is sniff-locked and asset IDs are random
+  // 24-hex strings with no path traversal surface, so allowing
+  // cross-origin embedding is safe here.
+  res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
   if (isApk) {
     // Force download prompt on Android + give a nice filename
     const filename = asset.filename || 'app.apk';
@@ -265,7 +270,8 @@ app.get('/media/:id', async (req, res) => {
 app.use('/uploads', (req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('Content-Security-Policy', "default-src 'none'; img-src 'self'; sandbox");
-  res.setHeader('Cross-Origin-Resource-Policy', 'same-site');
+  // Same rationale as /media: APK WebView needs to embed these across origins.
+  res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
   next();
 }, express.static(UPLOAD_ROOT, {
   dotfiles: 'deny',
