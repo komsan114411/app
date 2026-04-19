@@ -655,14 +655,33 @@ function Root() {
 
 // UserOnlyPage — canonical public page.
 // Renders UserApp full-viewport with no iPhone frame, no header, no toolbar.
-// Visitors see it exactly as they would inside a mobile app wrapper.
-// Handles:
-//   • initial config boot + 5s polling for live updates
-//   • document.title / favicon / apple-touch-icon sync with admin settings
-//   • demo-mode localStorage fallback when no live backend is reachable
+//
+// Startup strategy (removes the "flash of default demo content" the user
+// reported):
+//   1. Synchronously read the last known server config from localStorage
+//      key "public_cache_v1" and use IT as the initial state. No flash of
+//      the hardcoded "บ้านสวนออร์แกนิก" sample content.
+//   2. If there is no cache yet (truly first launch), render a minimal
+//      splash instead of UserApp — empty canvas with just the app's
+//      background colour. Swaps to real content as soon as fetch lands.
+//   3. When fetch completes, write the fresh config back to localStorage
+//      so the NEXT launch is instant.
 function UserOnlyPage() {
-  const [state, setState] = useState(DEFAULT_STATE);
+  const [state, setState] = useState(() => {
+    try {
+      const cached = localStorage.getItem('public_cache_v1');
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        const clean = SafeState.sanitize(parsed);
+        if (clean) return clean;
+      }
+    } catch {}
+    return DEFAULT_STATE;
+  });
   const [liveMode, setLiveMode] = useState(false);
+  const [hydrated, setHydrated] = useState(() => {
+    try { return !!localStorage.getItem('public_cache_v1'); } catch { return false; }
+  });
 
   useEffect(() => {
     (async () => {
@@ -670,11 +689,18 @@ function UserOnlyPage() {
         const boot = await loadInitialState();
         setState(boot.state);
         setLiveMode(boot.live);
-      } catch {}
+        setHydrated(true);
+        if (boot.live && boot.state) {
+          try { localStorage.setItem('public_cache_v1', JSON.stringify(boot.state)); } catch {}
+        }
+      } catch {
+        setHydrated(true);
+      }
     })();
   }, []);
 
-  // Live polling — admin edits land within ~3s
+  // Live polling — admin edits land within ~3s. Cache is refreshed on
+  // every successful tick so the warm-boot state stays current.
   useEffect(() => {
     if (!liveMode) return;
     let cancelled = false, lastVer = '';
@@ -685,27 +711,18 @@ function UserOnlyPage() {
         const ver = cfg.updatedAt ? String(cfg.updatedAt) : '';
         if (ver && ver === lastVer) return;
         lastVer = ver;
-        setState(prev => SafeState.sanitize({ ...prev, ...cfg }) || prev);
+        setState(prev => {
+          const merged = SafeState.sanitize({ ...prev, ...cfg }) || prev;
+          try { localStorage.setItem('public_cache_v1', JSON.stringify(merged)); } catch {}
+          return merged;
+        });
       } catch {}
     };
-    tick();  // fire once immediately on mount so the initial hydrate is fresh
+    tick();  // fire once immediately so the warm-boot state reconciles
     const id = setInterval(tick, 3000);
     const onVis = () => { if (!document.hidden) tick(); };
     document.addEventListener('visibilitychange', onVis);
     return () => { cancelled = true; clearInterval(id); document.removeEventListener('visibilitychange', onVis); };
-  }, [liveMode]);
-
-  // Demo-mode restore
-  useEffect(() => {
-    if (liveMode) return;
-    try {
-      const saved = localStorage.getItem('appState_v2');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        const clean = SafeState.sanitize(parsed);
-        if (clean) setState(clean);
-      }
-    } catch {}
   }, [liveMode]);
 
   useDocumentIdentity(state.appName, state.appIcon);
@@ -715,11 +732,27 @@ function UserOnlyPage() {
     [state.theme, state.buttons.length, state.banners.length]
   );
 
+  const bg = (THEMES[state.theme] || THEMES.cream).bg;
+
+  // Truly-first launch (no cache, no fetch yet) → render splash only.
+  // Prevents the "บ้านสวนออร์แกนิก" demo data from flashing.
+  if (!hydrated) {
+    return (
+      <div style={{
+        minHeight: '100vh', width: '100%', background: bg,
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+      }}>
+        <div style={{
+          width: 56, height: 56, borderRadius: 14,
+          background: 'rgba(0,0,0,0.04)',
+          animation: 'pulse 1200ms ease-in-out infinite',
+        }}/>
+      </div>
+    );
+  }
+
   return (
-    <div style={{
-      minHeight: '100vh', width: '100%',
-      background: (THEMES[state.theme] || THEMES.cream).bg,
-    }}>
+    <div style={{ minHeight: '100vh', width: '100%', background: bg }}>
       <UserApp
         state={state}
         pageKey={pageKey}
