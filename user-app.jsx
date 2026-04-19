@@ -221,6 +221,7 @@ function ContactButton({ contact, theme, onPress }) {
 function UserApp({ state, pageKey, onButtonPress }) {
   const baseTheme = THEMES[state.theme] || THEMES.cream;
   const [query, setQuery] = React.useState('');
+  const [activeTag, setActiveTag] = React.useState('');     // empty = no tag filter
   const [userPrefersDark, setUserPrefersDark] = React.useState(() => {
     try { return localStorage.getItem('user_dark') === '1'; } catch { return false; }
   });
@@ -256,16 +257,34 @@ function UserApp({ state, pageKey, onButtonPress }) {
     try { localStorage.setItem('user_dark', next ? '1' : '0'); } catch {}
   };
 
-  // Filter buttons by search query + tags
+  // Collect distinct tags across all buttons, in first-seen order.
+  // Shown as chips under the search bar so visitors can jump to a category.
+  const allTags = React.useMemo(() => {
+    const seen = new Set();
+    const out = [];
+    for (const b of state.buttons) {
+      for (const t of (b.tags || [])) {
+        const tag = String(t || '').toLowerCase().trim();
+        if (!tag || seen.has(tag)) continue;
+        seen.add(tag); out.push(tag);
+        if (out.length >= 12) return out;
+      }
+    }
+    return out;
+  }, [state.buttons]);
+
+  // Filter buttons by search query (label / sub / tags) AND by selected tag chip.
   const filteredButtons = React.useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return state.buttons;
-    return state.buttons.filter(b =>
-      (b.label || '').toLowerCase().includes(q) ||
-      (b.sub || '').toLowerCase().includes(q) ||
-      (b.tags || []).some(t => t.toLowerCase().includes(q))
-    );
-  }, [state.buttons, query]);
+    const tag = (activeTag || '').toLowerCase();
+    return state.buttons.filter(b => {
+      if (tag && !(b.tags || []).some(t => String(t).toLowerCase() === tag)) return false;
+      if (!q) return true;
+      return (b.label || '').toLowerCase().includes(q) ||
+             (b.sub   || '').toLowerCase().includes(q) ||
+             (b.tags  || []).some(t => String(t).toLowerCase().includes(q));
+    });
+  }, [state.buttons, query, activeTag]);
 
   const pageUrl = typeof location !== 'undefined' ? location.origin + location.pathname : '';
 
@@ -281,7 +300,7 @@ function UserApp({ state, pageKey, onButtonPress }) {
             width: 34, height: 34, borderRadius: 10, background: theme.accent,
             display: 'flex', alignItems: 'center', justifyContent: 'center',
             color: theme.accentInk, fontWeight: 700, fontSize: 15,
-          }}>{state.appName.slice(0, 1)}</div>
+          }}>{(state.appName || 'A').slice(0, 1)}</div>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontSize: 11, letterSpacing: 0.8, color: theme.muted, textTransform: 'uppercase' }}>
               {greetingFor(state.language)}
@@ -307,7 +326,7 @@ function UserApp({ state, pageKey, onButtonPress }) {
       </div>
 
       {state.buttons.length >= 4 && (
-        <div className="ua-enter" style={{ padding: '0 22px 12px', animationDelay: '180ms' }}>
+        <div className="ua-enter" style={{ padding: '0 22px 6px', animationDelay: '180ms' }}>
           <input
             type="search"
             value={query}
@@ -320,6 +339,22 @@ function UserApp({ state, pageKey, onButtonPress }) {
               outline: 'none',
             }}
           />
+        </div>
+      )}
+
+      {allTags.length > 0 && (
+        <div className="ua-enter" style={{
+          padding: '2px 22px 10px', display: 'flex', gap: 6, flexWrap: 'wrap', animationDelay: '200ms',
+        }}>
+          <button onClick={() => setActiveTag('')} style={tagChipStyle(theme, activeTag === '')}>
+            ทั้งหมด
+          </button>
+          {allTags.map(t => (
+            <button key={t} onClick={() => setActiveTag(activeTag === t ? '' : t)}
+              style={tagChipStyle(theme, activeTag === t)}>
+              #{t}
+            </button>
+          ))}
         </div>
       )}
 
@@ -397,6 +432,17 @@ function greetingFor(lang) {
   const h = new Date().getHours();
   if (lang === 'en') return h < 12 ? 'GOOD MORNING' : h < 18 ? 'GOOD AFTERNOON' : 'GOOD EVENING';
   return h < 12 ? 'สวัสดีตอนเช้า' : h < 18 ? 'สวัสดีตอนบ่าย' : 'สวัสดีตอนเย็น';
+}
+
+function tagChipStyle(theme, active) {
+  return {
+    padding: '5px 11px', borderRadius: 999, cursor: 'pointer',
+    border: `1px solid ${active ? theme.ink : theme.border}`,
+    background: active ? theme.ink : theme.surface,
+    color: active ? theme.surface : theme.ink,
+    fontFamily: 'inherit', fontSize: 11, fontWeight: active ? 600 : 500,
+    whiteSpace: 'nowrap', transition: 'all 140ms ease',
+  };
 }
 
 Object.assign(window, { UserApp, ContactButton });
