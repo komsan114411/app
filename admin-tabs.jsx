@@ -213,6 +213,33 @@ function nativeAlert(message) {
   } catch {}
 }
 
+// Inline two-click confirmation. Some browsers / Capacitor WebViews
+// silently suppress window.confirm — so we never depend on it. First
+// click arms the button (turns label into "ยืนยันอีกครั้ง?"); second
+// click within TTL actually fires. After TTL with no second click,
+// button resets. Works everywhere, can't be hidden or blocked.
+function useArmedConfirm(ttlMs = 3000) {
+  const [armed, setArmed] = React.useState('');   // which key is armed
+  const timer = React.useRef(null);
+  const arm = (key) => {
+    clearTimeout(timer.current);
+    setArmed(key);
+    timer.current = setTimeout(() => setArmed(''), ttlMs);
+  };
+  const disarm = () => {
+    clearTimeout(timer.current);
+    setArmed('');
+  };
+  // Returns true if caller should PROCEED (this is the second click);
+  // false if caller should WAIT (just armed on this first click).
+  const confirm = (key) => {
+    if (armed === key) { disarm(); return true; }
+    arm(key); return false;
+  };
+  React.useEffect(() => () => clearTimeout(timer.current), []);
+  return { armed, confirm, disarm };
+}
+
 function UsersTab({ currentUserId }) {
   const [rows, setRows] = React.useState([]);
   const [loading, setLoading] = React.useState(true);
@@ -229,6 +256,8 @@ function UsersTab({ currentUserId }) {
   // Guaranteed visible even on WebView / Capacitor where window.prompt
   // may be blocked by the host.
   const [reveal, setReveal] = React.useState(null);  // { title, body, copyable }
+  // Inline two-click arming — replaces window.confirm which some WebViews suppress.
+  const armed = useArmedConfirm();
   // Always-visible activity line at the top of the tab. Any click, any
   // success, any failure lands here so the admin has proof the button
   // registered — no need to open DevTools.
@@ -251,9 +280,8 @@ function UsersTab({ currentUserId }) {
 
   React.useEffect(() => { load(); }, [load]);
 
-  const act = async (id, action) => {
-    logActivity('click', `${action} on ${id}`);
-    if (!nativeConfirm(confirmText(action))) { logActivity('cancel', action); return; }
+  // Core API call — assumes the caller already got confirmation.
+  const doAct = async (id, action) => {
     setBusyId(id);
     logActivity('request', `POST /api/admin/users/${id}/${action}`);
     try {
@@ -275,9 +303,18 @@ function UsersTab({ currentUserId }) {
     } finally { setBusyId(''); }
   };
 
-  const changeRole = async (id, nextRole) => {
-    logActivity('click', `change role of ${id} → ${nextRole}`);
-    if (!nativeConfirm(`เปลี่ยนสิทธิ์เป็น "${nextRole}"?`)) { logActivity('cancel', 'changeRole'); return; }
+  // Click handler — uses inline arm-then-fire pattern (no native confirm).
+  const act = (id, action) => {
+    logActivity('click', `${action} on ${id}`);
+    // Reversible actions fire on first click — no confirm needed
+    if (action === 'enable') { doAct(id, action); return; }
+    // Destructive actions: first click arms, second click within 3s fires
+    const key = `${action}:${id}`;
+    if (armed.confirm(key)) { doAct(id, action); }
+    else { logActivity('arm', `กดอีกครั้งเพื่อยืนยัน ${action}`); }
+  };
+
+  const doChangeRole = async (id, nextRole) => {
     setBusyId(id);
     logActivity('request', `PATCH /api/admin/users/${id}/role → ${nextRole}`);
     try {
@@ -295,12 +332,14 @@ function UsersTab({ currentUserId }) {
     } finally { setBusyId(''); }
   };
 
-  const resetPw = async (id, loginId) => {
-    logActivity('click', `reset password of ${loginId}`);
-    if (!nativeConfirm(`รีเซ็ตรหัสของ "${loginId}"?\nระบบจะสร้างรหัสชั่วคราวและบังคับเปลี่ยนตอน login ครั้งถัดไป`)) {
-      logActivity('cancel', 'resetPw');
-      return;
-    }
+  const changeRole = (id, nextRole) => {
+    logActivity('click', `change role of ${id} → ${nextRole}`);
+    const key = `role:${id}:${nextRole}`;
+    if (armed.confirm(key)) { doChangeRole(id, nextRole); }
+    else { logActivity('arm', `กดอีกครั้งเพื่อยืนยันเปลี่ยนเป็น ${nextRole}`); }
+  };
+
+  const doResetPw = async (id, loginId) => {
     setBusyId(id);
     logActivity('request', `POST /api/admin/users/${id}/reset-password`);
     try {
@@ -331,6 +370,13 @@ function UsersTab({ currentUserId }) {
         tone: 'error',
       });
     } finally { setBusyId(''); }
+  };
+
+  const resetPw = (id, loginId) => {
+    logActivity('click', `reset password of ${loginId}`);
+    const key = `reset:${id}`;
+    if (armed.confirm(key)) { doResetPw(id, loginId); }
+    else { logActivity('arm', `กดอีกครั้งเพื่อยืนยันรีเซ็ตรหัสของ ${loginId}`); }
   };
 
   return (
@@ -425,27 +471,66 @@ function UsersTab({ currentUserId }) {
                   </div>
                 </div>
                 <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-                  {!isSelf && (
-                    <button onClick={() => changeRole(u._id, u.role === 'admin' ? 'editor' : 'admin')}
-                      disabled={rowBusy}
-                      style={{ ...pillBtn, color: '#1F1B17', cursor: rowBusy ? 'wait' : 'pointer' }}>
-                      {u.role === 'admin' ? '→ editor' : '→ admin'}
-                    </button>
-                  )}
-                  <button onClick={() => resetPw(u._id, u.loginId)}
-                    disabled={rowBusy}
-                    title={isSelf ? 'รีเซ็ตรหัสตัวเอง: แนะนำใช้แท็บ "ความปลอดภัย" แทน' : 'สร้างรหัสชั่วคราว'}
-                    style={{ ...pillBtn, color: '#7A5A10', cursor: rowBusy ? 'wait' : 'pointer' }}>รีเซ็ตรหัส</button>
+                  {!isSelf && (() => {
+                    const nextRole = u.role === 'admin' ? 'editor' : 'admin';
+                    const isArmed = armed.armed === `role:${u._id}:${nextRole}`;
+                    return (
+                      <button onClick={() => changeRole(u._id, nextRole)} disabled={rowBusy}
+                        style={{ ...pillBtn,
+                          background: isArmed ? '#1F1B17' : '#fff',
+                          color: isArmed ? '#fff' : '#1F1B17',
+                          borderColor: isArmed ? '#1F1B17' : 'rgba(0,0,0,0.12)',
+                          cursor: rowBusy ? 'wait' : 'pointer' }}>
+                        {isArmed ? `✓ ยืนยัน → ${nextRole}?` : (u.role === 'admin' ? '→ editor' : '→ admin')}
+                      </button>
+                    );
+                  })()}
+                  {(() => {
+                    const isArmed = armed.armed === `reset:${u._id}`;
+                    return (
+                      <button onClick={() => resetPw(u._id, u.loginId)} disabled={rowBusy}
+                        title={isSelf ? 'รีเซ็ตรหัสตัวเอง: แนะนำใช้แท็บ "ความปลอดภัย" แทน' : 'สร้างรหัสชั่วคราว'}
+                        style={{ ...pillBtn,
+                          background: isArmed ? '#7A5A10' : '#fff',
+                          color: isArmed ? '#fff' : '#7A5A10',
+                          borderColor: isArmed ? '#7A5A10' : 'rgba(0,0,0,0.12)',
+                          cursor: rowBusy ? 'wait' : 'pointer' }}>
+                        {isArmed ? '✓ ยืนยันรีเซ็ต?' : 'รีเซ็ตรหัส'}
+                      </button>
+                    );
+                  })()}
                   {disabled
                     ? <button onClick={() => act(u._id, 'enable')} disabled={rowBusy}
                         style={{ ...pillBtn, color: '#058850', cursor: rowBusy ? 'wait' : 'pointer' }}>เปิด</button>
-                    : <button onClick={() => act(u._id, 'disable')} disabled={isSelf || rowBusy}
-                        title={isSelf ? 'ปิดบัญชีตัวเองไม่ได้' : 'ปิดบัญชี + เตะออกทุกเซสชัน'}
-                        style={{ ...pillBtn, color: '#B4463A', opacity: (isSelf || rowBusy) ? 0.3 : 1, cursor: (isSelf || rowBusy) ? 'not-allowed' : 'pointer' }}>ปิด</button>}
-                  <button onClick={() => act(u._id, 'revoke-sessions')}
-                    disabled={rowBusy}
-                    title="บังคับ logout อุปกรณ์ทั้งหมดของผู้ใช้รายนี้"
-                    style={{ ...pillBtn, color: '#7A5A10', cursor: rowBusy ? 'wait' : 'pointer' }}>เตะออก</button>
+                    : (() => {
+                        const isArmed = armed.armed === `disable:${u._id}`;
+                        return (
+                          <button onClick={() => act(u._id, 'disable')} disabled={isSelf || rowBusy}
+                            title={isSelf ? 'ปิดบัญชีตัวเองไม่ได้' : 'ปิดบัญชี + เตะออกทุกเซสชัน'}
+                            style={{ ...pillBtn,
+                              background: isArmed ? '#B4463A' : '#fff',
+                              color: isArmed ? '#fff' : '#B4463A',
+                              borderColor: isArmed ? '#B4463A' : 'rgba(0,0,0,0.12)',
+                              opacity: (isSelf || rowBusy) ? 0.3 : 1,
+                              cursor: (isSelf || rowBusy) ? 'not-allowed' : 'pointer' }}>
+                            {isArmed ? '✓ ยืนยันปิด?' : 'ปิด'}
+                          </button>
+                        );
+                      })()}
+                  {(() => {
+                    const isArmed = armed.armed === `revoke-sessions:${u._id}`;
+                    return (
+                      <button onClick={() => act(u._id, 'revoke-sessions')} disabled={rowBusy}
+                        title="บังคับ logout อุปกรณ์ทั้งหมดของผู้ใช้รายนี้"
+                        style={{ ...pillBtn,
+                          background: isArmed ? '#7A5A10' : '#fff',
+                          color: isArmed ? '#fff' : '#7A5A10',
+                          borderColor: isArmed ? '#7A5A10' : 'rgba(0,0,0,0.12)',
+                          cursor: rowBusy ? 'wait' : 'pointer' }}>
+                        {isArmed ? '✓ ยืนยันเตะออก?' : 'เตะออก'}
+                      </button>
+                    );
+                  })()}
                 </div>
               </div>
             </Card>

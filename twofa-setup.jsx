@@ -35,10 +35,20 @@ function TwoFactorSetup({ me, onChanged }) {
     finally { setBusy(false); setCode(''); }
   };
 
+  const [disableArmed, setDisableArmed] = React.useState(false);
+  const disableTimer = React.useRef(null);
+  React.useEffect(() => () => clearTimeout(disableTimer.current), []);
+
   const disable = async () => {
     if (!disablePw) { toast.error('ใส่รหัสผ่านปัจจุบัน'); return; }
-    const ok = await toast.confirm('ปิดการใช้งาน 2FA? บัญชีจะปลอดภัยน้อยลง', 'ปิด 2FA', 'ยกเลิก', { tone: 'danger' });
-    if (!ok) return;
+    if (!disableArmed) {
+      setDisableArmed(true);
+      clearTimeout(disableTimer.current);
+      disableTimer.current = setTimeout(() => setDisableArmed(false), 3000);
+      return;
+    }
+    setDisableArmed(false);
+    clearTimeout(disableTimer.current);
     setBusy(true);
     try {
       await api.call('/api/admin/me/totp/disable', { method: 'POST', body: { password: disablePw }, auth: true });
@@ -167,8 +177,13 @@ Created: ${new Date().toLocaleString()}<br/>
             <input type="password" value={disablePw} onChange={e => setDisablePw(e.target.value.slice(0, 200))}
               autoComplete="current-password" placeholder="รหัสผ่านปัจจุบัน"
               style={{ ...pwInput, flex: 1 }}/>
-            <button onClick={disable} disabled={busy} style={{ ...pillBtn, color: '#B4463A' }}>
-              {busy ? '...' : 'ปิด 2FA'}
+            <button onClick={disable} disabled={busy} style={{
+              ...pillBtn,
+              background: disableArmed ? '#B4463A' : '#fff',
+              color: disableArmed ? '#fff' : '#B4463A',
+              borderColor: disableArmed ? '#B4463A' : 'rgba(0,0,0,0.12)',
+            }}>
+              {busy ? '...' : disableArmed ? '✓ ยืนยันปิด 2FA?' : 'ปิด 2FA'}
             </button>
           </div>
         </div>

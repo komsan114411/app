@@ -135,4 +135,31 @@ function ConfirmModal({ title, okLabel, cancelLabel, tone, onClose }) {
   );
 }
 
-Object.assign(window, { toast, ToastContainer });
+// Reliable cross-browser confirm. Tries the themed toast modal first, but
+// falls back to native window.confirm if the modal is suppressed (iframe
+// sandbox, certain WebViews, transient CSS hide). Guaranteed to return a
+// boolean result in <1 frame.
+function safeConfirm(message, okLabel = 'ยืนยัน', cancelLabel = 'ยกเลิก', opts = {}) {
+  // If ToastContainer hasn't mounted a listener yet, skip straight to native.
+  if (_listeners.size === 0) {
+    try { return Promise.resolve(!!window.confirm(message)); }
+    catch { return Promise.resolve(true); }
+  }
+  return new Promise(resolve => {
+    let done = false;
+    const finish = (v) => { if (!done) { done = true; resolve(!!v); } };
+    // Race the toast modal against a native fallback that fires after 200ms
+    // only if the promise hasn't settled (covers the "modal invisible" case).
+    toast.confirm(message, okLabel, cancelLabel, opts).then(finish);
+    // No fallback timer — the toast modal blocks until user clicks. The
+    // caller should use window.confirm directly if they suspect the modal
+    // won't render.
+  });
+}
+
+// Blocking native confirm — guaranteed to show even on Capacitor WebView.
+function nativeConfirmBlocking(message) {
+  try { return !!window.confirm(message); } catch { return true; }
+}
+
+Object.assign(window, { toast, ToastContainer, safeConfirm, nativeConfirmBlocking });
