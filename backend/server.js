@@ -382,30 +382,9 @@ async function ensureBootstrapped() {
       log.warn({ loginId }, '🔐 auto-seeded first admin — MUST change the default password on first login');
     }
 
-    // ── Admin-access URL token ─────────────────────────────────────────
-    // The /admin/<token> URL is the ONLY way to reach the admin login
-    // form. If no token exists yet (fresh DB) generate one and log it
-    // prominently so the operator can copy it from Railway/Render logs.
-    const { default: crypto } = await import('node:crypto');
-    const cfg = await getAppConfig();
-    if (!cfg.adminAccessToken?.current) {
-      const token = crypto.randomBytes(18).toString('base64url');
-      cfg.adminAccessToken = {
-        current: token,
-        rotatedAt: new Date(),
-        rotationCount: 1,
-      };
-      await cfg.save();
-      const line = '═'.repeat(60);
-      console.log('\n' + line);
-      console.log('  🔐  ADMIN ACCESS URL  (save this — your only way in)');
-      console.log('');
-      console.log('      /admin/' + token);
-      console.log('');
-      console.log('  Full URL:  <your-domain>/admin/' + token);
-      console.log('  Rotate anytime from admin console (ความปลอดภัย tab)');
-      console.log(line + '\n');
-    }
+    // Admin-access token (kept for backward compat with any old shared
+    // /admin/<token> URLs) — no longer printed on boot since /admin is
+    // the canonical entrance now.
   } catch (e) {
     log.error({ err: e.message }, 'bootstrap_admin_failed');
   }

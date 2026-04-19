@@ -961,9 +961,19 @@ function ApkUploader({ currentUrl, onUploaded }) {
   const onDrop = (e) => { e.preventDefault(); upload(e.dataTransfer?.files?.[0]); };
   const onDrag = (e) => e.preventDefault();
 
-  const pickExisting = (url, filename) => {
-    onUploaded?.(url, filename || 'app.apk');
-    toast.success('เลือก APK เดิมแล้ว');
+  const pickExisting = async (url, filename) => {
+    // Write the URL server-side FIRST (same race-avoidance as fresh upload)
+    // so the polling loop can't clobber it with the stale empty value.
+    try {
+      await api.setDownloadLinks({
+        android: url,
+        androidLabel: 'ดาวน์โหลด ' + (filename || 'APK'),
+      });
+      onUploaded?.(url, filename || 'app.apk');
+      if (typeof toast !== 'undefined') toast.success('ตั้งเป็นลิงก์ปัจจุบันแล้ว');
+    } catch (e) {
+      if (typeof toast !== 'undefined') toast.error('เซ็ตลิงก์ไม่สำเร็จ: ' + (e.message || ''));
+    }
   };
 
   const remove = async (id) => {
