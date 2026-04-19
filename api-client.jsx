@@ -132,7 +132,10 @@ const api = {
   async changeRole(id, role)     { return request(`/api/admin/users/${id}/role`, { method: 'PATCH', body: { role }, auth: true }); },
   async resetUserPassword(id)    { return request(`/api/admin/users/${id}/reset-password`, { method: 'POST', auth: true }); },
   async changePassword(currentPassword, newPassword) {
-    return request('/api/admin/me/password', { method: 'POST', body: { currentPassword, newPassword }, auth: true });
+    // currentPassword is optional when the server sees mustChangePassword=true.
+    // Pass an empty string / undefined and the server will accept it.
+    const body = currentPassword ? { currentPassword, newPassword } : { newPassword };
+    return request('/api/admin/me/password', { method: 'POST', body, auth: true });
   },
   async forgetMe()               { return request('/api/privacy/forget', { method: 'POST' }); },
 

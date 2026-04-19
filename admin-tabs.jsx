@@ -43,7 +43,10 @@ function SecurityTab({ onLogout, mustChange = false, onPasswordChanged, me, onMe
     if (next.length < 12) { setMsg({ kind: 'error', text: 'ต้องยาวอย่างน้อย 12 ตัว' }); return; }
     setBusy(true);
     try {
-      await api.changePassword(current, next);
+      // First-time setup: server accepts blank currentPassword when the
+      // account still has mustChangePassword=true. Skip the field entirely
+      // so we don't have to force the user to retype their default.
+      await api.changePassword(mustChange ? '' : current, next);
       if (mustChange) {
         setMsg({ kind: 'success', text: 'ตั้งรหัสใหม่สำเร็จ — กรุณาเข้าสู่ระบบอีกครั้ง' });
         setTimeout(() => onLogout?.(), 1400);
@@ -81,10 +84,12 @@ function SecurityTab({ onLogout, mustChange = false, onPasswordChanged, me, onMe
         <Card>
           <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 10 }}>เปลี่ยนรหัสผ่าน</div>
           <form onSubmit={submit} autoComplete="off">
-            <Field label="รหัสผ่านปัจจุบัน">
-              <input type="password" value={current} onChange={e => setCurrent(e.target.value.slice(0, 200))}
-                required autoComplete="current-password" maxLength={200} style={pwInput}/>
-            </Field>
+            {!mustChange && (
+              <Field label="รหัสผ่านปัจจุบัน">
+                <input type="password" value={current} onChange={e => setCurrent(e.target.value.slice(0, 200))}
+                  required autoComplete="current-password" maxLength={200} style={pwInput}/>
+              </Field>
+            )}
             <Field label="รหัสผ่านใหม่ (อย่างน้อย 12 ตัว, ผสมตัวพิมพ์ใหญ่/เล็ก/เลข/สัญลักษณ์)">
               <input type="password" value={next} onChange={e => setNext(e.target.value.slice(0, 200))}
                 required autoComplete="new-password" minLength={12} maxLength={200} style={pwInput}/>
@@ -410,6 +415,11 @@ function friendlyUserActionError(code) {
 }
 
 // ─── Download Links tab: APK / App Store URLs ─────────────────
+// Lets the admin configure where the "Install on mobile" buttons on the
+// user page should send visitors. The Android slot can be auto-filled
+// with the project's rolling GitHub Release URL — the android.yml CI
+// workflow publishes `app-debug.apk` to a "latest-apk" release on every
+// push to main, so this URL stays fresh automatically.
 function DownloadLinksEditor({ state, setState }) {
   const dl = state.downloadLinks || {};
   const patch = (p) => setState(s => ({
@@ -417,12 +427,47 @@ function DownloadLinksEditor({ state, setState }) {
     downloadLinks: { ...(s.downloadLinks || {}), ...p },
   }));
 
+  const [repo, setRepo] = React.useState(() => {
+    try { return localStorage.getItem('githubRepo') || ''; } catch { return ''; }
+  });
+  const rememberRepo = (r) => { try { localStorage.setItem('githubRepo', r); } catch {} };
+
+  const autofillAndroid = () => {
+    const trimmed = (repo || '').trim().replace(/^https?:\/\/(www\.)?github\.com\//i, '').replace(/\/+$/, '');
+    const m = trimmed.match(/^([a-z0-9-]+)\/([a-z0-9._-]+)$/i);
+    if (!m) { toast.error('ใส่รูปแบบ owner/repo เช่น komsan114411/app'); return; }
+    const [, owner, name] = m;
+    rememberRepo(trimmed);
+    const url = `https://github.com/${owner}/${name}/releases/download/latest-apk/app-debug.apk`;
+    patch({ android: url, androidLabel: dl.androidLabel || 'ดาวน์โหลด APK' });
+    toast.success('ใส่ลิงก์ล่าสุดของ GitHub Release แล้ว');
+  };
+
   return (
     <div>
       <SectionHead
         title="ลิงก์ดาวน์โหลดแอป (มือถือ)"
         sub="วาง URL ไปยัง APK / Play Store / App Store · หน้าผู้ใช้จะเห็นปุ่มดาวน์โหลดอัตโนมัติ"
       />
+
+      <Card style={{ marginBottom: 14, background: '#F3EFE7' }}>
+        <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 6 }}>⚡ Auto-fill จาก GitHub</div>
+        <div style={{ fontSize: 11, color: '#6B6458', marginBottom: 10, lineHeight: 1.5 }}>
+          CI workflow <code>.github/workflows/android.yml</code> build APK อัตโนมัติทุก push ไป main แล้วเผยแพร่เป็น <code>latest-apk</code> release.
+          ใส่ <code>owner/repo</code> แล้วกด Auto-fill เพื่อให้ลิงก์ Android ชี้ไปที่ APK ล่าสุด
+        </div>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <input type="text" value={repo} onChange={e => setRepo(e.target.value.slice(0, 100))}
+            placeholder="komsan114411/app"
+            style={{ flex: 1, minWidth: 200, padding: '8px 12px', borderRadius: 9, border: '1px solid rgba(0,0,0,0.12)', background: '#fff', fontFamily: 'inherit', fontSize: 13 }}/>
+          <button onClick={autofillAndroid} style={{
+            padding: '8px 16px', borderRadius: 9, border: 'none',
+            background: '#1F1B17', color: '#fff', fontFamily: 'inherit',
+            fontSize: 12, fontWeight: 600, cursor: 'pointer',
+          }}>Auto-fill Android</button>
+        </div>
+      </Card>
+
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 16 }}>
         <Card>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
@@ -459,6 +504,41 @@ function DownloadLinksEditor({ state, setState }) {
             onChange={e => patch({ note: e.target.value })}
             placeholder="เช่น เวอร์ชัน 1.0 · อัปเดต 25 ก.ค. 2568"/>
         </Field>
+      </Card>
+
+      <Card style={{ marginTop: 14 }}>
+        <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>📤 แชร์ลิงก์ให้ผู้ใช้</div>
+        <div style={{ fontSize: 11, color: '#6B6458', marginBottom: 10, lineHeight: 1.5 }}>
+          วาง URL นี้ในโพสต์ / Line / Facebook · ผู้ใช้กดแล้วเห็นหน้าแอปพร้อมปุ่ม install อัตโนมัติ
+        </div>
+        {(dl.android || dl.ios) ? (
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+            <code style={{ flex: 1, minWidth: 200, padding: '8px 12px', borderRadius: 8, background: '#F3EFE7', fontSize: 12, fontFamily: 'ui-monospace, monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {typeof location !== 'undefined' ? location.origin : 'https://your-domain'}/
+            </code>
+            <button onClick={() => {
+              const url = (typeof location !== 'undefined' ? location.origin : '') + '/';
+              try { navigator.clipboard.writeText(url); toast.success('คัดลอกลิงก์แล้ว'); }
+              catch { toast.error('คัดลอกไม่สำเร็จ'); }
+            }} style={{
+              padding: '8px 14px', borderRadius: 8, border: '1px solid rgba(0,0,0,0.12)',
+              background: '#fff', fontFamily: 'inherit', fontSize: 12, cursor: 'pointer',
+            }}>📋 คัดลอก</button>
+            {dl.android && (
+              <button onClick={() => {
+                try { navigator.clipboard.writeText(dl.android); toast.success('คัดลอกลิงก์ APK แล้ว'); }
+                catch { toast.error('คัดลอกไม่สำเร็จ'); }
+              }} style={{
+                padding: '8px 14px', borderRadius: 8, border: '1px solid rgba(0,0,0,0.12)',
+                background: '#fff', fontFamily: 'inherit', fontSize: 12, cursor: 'pointer',
+              }}>คัดลอก APK โดยตรง</button>
+            )}
+          </div>
+        ) : (
+          <div style={{ fontSize: 12, color: '#8F877C', fontStyle: 'italic' }}>
+            ตั้งลิงก์ Android / iOS ก่อน
+          </div>
+        )}
       </Card>
       <div style={{ marginTop: 12, padding: '12px 14px', borderRadius: 10, background: '#F3EFE7', fontSize: 11, color: '#6B6458', lineHeight: 1.6 }}>
         <strong>วิธีสร้าง APK:</strong> CI workflow บน GitHub Actions สร้าง APK ให้อัตโนมัติเมื่อ push code

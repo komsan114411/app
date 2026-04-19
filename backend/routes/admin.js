@@ -14,7 +14,8 @@ import { requireAuth, requireRole } from '../middleware/auth.js';
 import { verifyCsrf } from '../middleware/csrf.js';
 import { adminWriteLimiter, uploadLimiter } from '../middleware/rateLimit.js';
 import { validate, configBody, createUserBody } from '../middleware/validate.js';
-import { uploadSingle } from '../middleware/upload.js';
+import { uploadSingle, MIME_TO_EXT } from '../middleware/upload.js';
+import { MediaAsset } from '../models/MediaAsset.js';
 import { sanitizeConfig, hashIp, safeText, safeUrl } from '../utils/sanitize.js';
 import { revokeAllForUser, revokeOne } from '../utils/tokens.js';
 import { generateSecret, qrDataUrl, verifyToken as verifyTotp, generateBackupCodes, hashBackupCode } from '../utils/totp.js';
@@ -286,22 +287,48 @@ adminRouter.patch('/config', adminWriteLimiter, requireRole('admin', 'editor'), 
 });
 
 // ── Upload banner image (multipart) ─────────────────────────
-adminRouter.post('/upload/banner', uploadLimiter, requireRole('admin', 'editor'), (req, res) => {
-  uploadSingle(req, res, async (err) => {
-    if (err) {
-      if (err.code === 'LIMIT_FILE_SIZE') return res.status(413).json({ error: 'file_too_large' });
-      if (err.message === 'unsupported_media_type') return res.status(415).json({ error: 'unsupported_media_type' });
-      return res.status(400).json({ error: 'upload_failed' });
-    }
-    if (!req.file) return res.status(400).json({ error: 'no_file' });
-    const url = '/uploads/' + req.file.filename;
-    await AuditLog.create({
-      actorId: req.user.id, actorEmail: req.user.loginId,
-      action: 'banner_upload', target: url,
-      ipHash: hashIp(req.ip), userAgent: safeText(req.get('user-agent') || '', 200),
-    });
-    res.json({ ok: true, url, size: req.file.size });
+// Buffers the file in memory via multer, then stores the bytes in the
+// MediaAsset collection. Serving happens at GET /media/:id (server.js).
+// This avoids the ephemeral-filesystem problem on Railway etc.
+function runUpload(req, res) {
+  return new Promise((resolve, reject) => {
+    uploadSingle(req, res, (err) => err ? reject(err) : resolve());
   });
+}
+
+adminRouter.post('/upload/banner', uploadLimiter, requireRole('admin', 'editor'), async (req, res) => {
+  try {
+    await runUpload(req, res);
+  } catch (err) {
+    if (err && err.code === 'LIMIT_FILE_SIZE') return res.status(413).json({ error: 'file_too_large' });
+    if (err && err.message === 'unsupported_media_type') return res.status(415).json({ error: 'unsupported_media_type' });
+    log.warn({ err: err?.message }, 'upload_multer_failed');
+    return res.status(400).json({ error: 'upload_failed' });
+  }
+  if (!req.file) return res.status(400).json({ error: 'no_file' });
+
+  const ext = MIME_TO_EXT[req.file.mimetype] || '.img';
+  const id = crypto.randomBytes(12).toString('hex') + ext;
+  try {
+    await MediaAsset.create({
+      _id: id,
+      mime: req.file.mimetype,
+      size: req.file.size,
+      data: req.file.buffer,
+      uploadedBy: req.user.id,
+    });
+  } catch (err) {
+    log.error({ err: err?.message }, 'media_persist_failed');
+    return res.status(500).json({ error: 'upload_failed' });
+  }
+
+  const url = '/media/' + id;
+  await AuditLog.create({
+    actorId: req.user.id, actorEmail: req.user.loginId,
+    action: 'banner_upload', target: url,
+    ipHash: hashIp(req.ip), userAgent: safeText(req.get('user-agent') || '', 200),
+  });
+  res.json({ ok: true, url, size: req.file.size });
 });
 
 // ── Analytics (detailed per-button) ─────────────────────────
@@ -584,23 +611,36 @@ adminRouter.post('/users/:id/revoke-sessions', requireRole('admin'), async (req,
 });
 
 // ── Own password change ─────────────────────────────────────
+// `currentPassword` is required UNLESS the account still has the
+// mustChangePassword flag (first login after auto-seed or admin reset).
+// The user has already proven they know the default password by logging
+// in with it — asking for it again is pure friction AND often gets them
+// stuck when the default was auto-generated and they never memorised it.
 const pwChangeBody = z.object({
-  currentPassword: z.string().min(1).max(200),
+  currentPassword: z.string().max(200).optional(),
   newPassword: z.string().min(12).max(200),
 });
 
 adminRouter.post('/me/password', adminWriteLimiter, validate(pwChangeBody), async (req, res) => {
   const me = await User.findById(req.user.id).select('+passwordHash');
   if (!me) return res.status(401).json({ error: 'unauthorized' });
-  const ok = await me.verifyPassword(req.body.currentPassword);
-  if (!ok) {
-    await AuditLog.create({
-      actorId: me._id, actorEmail: me.loginId,
-      action: 'password_change_fail', outcome: 'failure',
-      ipHash: hashIp(req.ip), userAgent: safeText(req.get('user-agent') || '', 200),
-    });
-    return res.status(401).json({ error: 'invalid_credentials' });
+
+  const isFirstTime = !!me.mustChangePassword;
+  if (!isFirstTime) {
+    if (!req.body.currentPassword) {
+      return res.status(400).json({ error: 'current_password_required' });
+    }
+    const ok = await me.verifyPassword(req.body.currentPassword);
+    if (!ok) {
+      await AuditLog.create({
+        actorId: me._id, actorEmail: me.loginId,
+        action: 'password_change_fail', outcome: 'failure',
+        ipHash: hashIp(req.ip), userAgent: safeText(req.get('user-agent') || '', 200),
+      });
+      return res.status(401).json({ error: 'invalid_credentials' });
+    }
   }
+
   try { await me.setPassword(req.body.newPassword, [me.loginId, me.email]); }
   catch (e) { return res.status(400).json({ error: e.reason || 'weak_password', suggestions: (e.details && e.details.suggestions) || [] }); }
   me.mustChangePassword = false;
@@ -609,7 +649,7 @@ adminRouter.post('/me/password', adminWriteLimiter, validate(pwChangeBody), asyn
   await User.findOneAndUpdate({ _id: me._id }, { $inc: { tokenVersion: 1 } });
   await AuditLog.create({
     actorId: me._id, actorEmail: me.loginId,
-    action: 'password_change', outcome: 'success',
+    action: isFirstTime ? 'password_first_setup' : 'password_change', outcome: 'success',
     ipHash: hashIp(req.ip), userAgent: safeText(req.get('user-agent') || '', 200),
   });
   res.json({ ok: true });

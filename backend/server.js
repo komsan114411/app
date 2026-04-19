@@ -17,6 +17,7 @@ import { connectDB, disconnectDB } from './db.js';
 import { log } from './utils/logger.js';
 import { User } from './models/User.js';
 import { getAppConfig } from './models/AppConfig.js';
+import { MediaAsset } from './models/MediaAsset.js';
 
 // ── Startup feature warnings ────────────────────────────────
 // Surface missing-but-impactful config at boot time so operators notice in
@@ -221,10 +222,27 @@ app.use('/api',           publicRouter);
 app.use('/api/auth',      authRouter);
 app.use('/api/admin',     adminRouter);
 
-// ── Uploaded files — banner images etc. served as public (no auth) ─────
-// Defence in depth: even though upload.js only accepts raster images, we
-// still tell the browser never to sniff these responses or run anything
-// embedded in them, and we isolate them from same-origin pages.
+// ── Uploaded media served from MongoDB ─────────────────────────────────
+// Filename pattern (hex.ext) guards against path-traversal; the MediaAsset
+// collection also validates ext on insert so the browser Content-Type can
+// be trusted. Headers harden the response against sniffing / embedding.
+const MEDIA_ID_RE = /^[a-f0-9]{12,64}\.(jpg|jpeg|png|webp|gif)$/i;
+app.get('/media/:id', async (req, res) => {
+  const id = String(req.params.id || '');
+  if (!MEDIA_ID_RE.test(id)) return res.status(400).json({ error: 'invalid_id' });
+  const asset = await MediaAsset.findById(id).lean();
+  if (!asset || !asset.data) return res.status(404).json({ error: 'not_found' });
+  res.setHeader('Content-Type', asset.mime);
+  res.setHeader('Content-Length', String(asset.size || asset.data.length));
+  res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Content-Security-Policy', "default-src 'none'; img-src 'self'; sandbox");
+  res.setHeader('Cross-Origin-Resource-Policy', 'same-site');
+  res.send(Buffer.isBuffer(asset.data) ? asset.data : Buffer.from(asset.data.buffer || asset.data));
+});
+
+// Legacy disk-based uploads (pre-MongoDB era). Kept for backward compat
+// with any old config pointing at /uploads/<file>. New uploads go to DB.
 app.use('/uploads', (req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('Content-Security-Policy', "default-src 'none'; img-src 'self'; sandbox");

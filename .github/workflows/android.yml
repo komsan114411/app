@@ -1,5 +1,10 @@
 name: Android APK Build
 
+# Builds the Capacitor-wrapped APK on every push to main and publishes it to
+# a rolling "latest-apk" prerelease. The download URL is stable, so the admin
+# UI can link to it directly:
+#   https://github.com/<owner>/<repo>/releases/latest-apk/download/app-debug.apk
+
 on:
   push:
     branches: [main]
@@ -14,11 +19,11 @@ on:
     inputs:
       api_base:
         description: 'API base URL to bake into the APK'
-        required: true
-        default: 'https://api.your-domain.example.com'
+        required: false
+        default: ''
 
 permissions:
-  contents: read
+  contents: write        # needed to create releases
 
 jobs:
   build-apk:
@@ -48,7 +53,10 @@ jobs:
       - name: Prepare web assets with API_BASE
         working-directory: mobile
         env:
-          API_BASE: ${{ github.event.inputs.api_base || 'https://api.your-domain.example.com' }}
+          # Default to empty → APK uses same-origin relative URLs, which works
+          # when the APK's WebView loads from the deployed Railway/Render site.
+          # Operators who bake a different backend can pass one via dispatch.
+          API_BASE: ${{ github.event.inputs.api_base }}
         run: node scripts/prepare-web.js
 
       - name: Sync Capacitor
@@ -61,23 +69,35 @@ jobs:
           chmod +x gradlew
           ./gradlew assembleDebug
 
-      - name: Upload APK
+      - name: Upload APK (workflow artifact)
         uses: actions/upload-artifact@v4
         with:
           name: app-debug-apk
           path: mobile/android/app/build/outputs/apk/debug/app-debug.apk
           retention-days: 30
 
-      - name: Build release APK (unsigned)
-        if: github.event_name == 'workflow_dispatch'
-        working-directory: mobile/android
-        run: ./gradlew assembleRelease || true
-
-      - name: Upload release APK
-        if: github.event_name == 'workflow_dispatch'
-        uses: actions/upload-artifact@v4
+      # ── Public download: rolling release ──────────────────────────────
+      # The tag is deleted + recreated each build so the "latest-apk" release
+      # always points at HEAD. End users download via:
+      #   github.com/<owner>/<repo>/releases/download/latest-apk/app-debug.apk
+      # or the always-latest URL:
+      #   github.com/<owner>/<repo>/releases/latest-apk/download/app-debug.apk
+      - name: Publish rolling release
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        uses: softprops/action-gh-release@v2
         with:
-          name: app-release-unsigned-apk
-          path: mobile/android/app/build/outputs/apk/release/*.apk
-          retention-days: 30
-          if-no-files-found: ignore
+          tag_name: latest-apk
+          name: Latest Android APK (auto-build)
+          prerelease: true
+          make_latest: 'false'
+          files: mobile/android/app/build/outputs/apk/debug/app-debug.apk
+          body: |
+            Automatically built APK from commit `${{ github.sha }}`.
+            Built at: `${{ github.event.head_commit.timestamp }}`
+
+            ### Install
+            1. Download `app-debug.apk` below
+            2. On Android: Settings → "Install unknown apps" → allow for your browser/file manager
+            3. Open the APK → Install
+
+            This is a debug build and is not Google-Play signed; Android will show a generic security warning. For a signed release build, configure `android.signingConfig` in `mobile/` and trigger the workflow manually.

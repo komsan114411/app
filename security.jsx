@@ -22,6 +22,8 @@ const ALLOWED_THEMES   = ['cream','sage','midnight','sunset'];
 
 // URL scheme whitelist. NOTE: explicitly blocks javascript:, data:, file:, blob:, vbscript:
 const SAFE_URL_RE = /^(https?:\/\/|tel:|mailto:|line:\/\/|fb-messenger:\/\/|whatsapp:\/\/)[^\s<>"'`]*$/i;
+const RELATIVE_UPLOAD_RE = /^\/uploads\/[a-f0-9]{24}\.(jpe?g|png|webp|gif)$/i;
+const RELATIVE_MEDIA_RE  = /^\/media\/[a-f0-9]{12,64}\.(jpe?g|png|webp|gif)$/i;
 
 // ─── URL validator ──────────────────────────────────────────────
 // Returns the trimmed URL if safe, else '' (drop silently).
@@ -31,6 +33,9 @@ function safeUrl(u) {
   if (!trimmed) return '';
   // Reject control characters outright
   if (/[\x00-\x1F\x7F]/.test(trimmed)) return '';
+  // Allow same-origin upload / media paths
+  if (RELATIVE_UPLOAD_RE.test(trimmed)) return trimmed;
+  if (RELATIVE_MEDIA_RE.test(trimmed)) return trimmed;
   if (!SAFE_URL_RE.test(trimmed)) return '';
   // Additional check: parse http(s) URLs with URL()
   if (/^https?:\/\//i.test(trimmed)) {
