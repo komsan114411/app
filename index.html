@@ -559,8 +559,20 @@ function Root() {
   const path = (typeof location !== 'undefined' ? location.pathname : '/').replace(/\/+$/, '') || '/';
   const qs = (typeof location !== 'undefined' ? new URLSearchParams(location.search) : null);
   const installMode = /^\/(install|download)(\/|$)/.test(path) || (qs && qs.get('page') === 'install');
-  const adminMode = /^\/admin(\/|$)/.test(path) || (qs && qs.get('admin'));
-  const previewMode = qs && qs.get('preview') === '1';
+
+  // Capacitor WebView detection — when true, we are running inside the
+  // installed APK/IPA, NOT in a desktop/mobile browser. In that case
+  // the admin console must be unreachable no matter what path Capacitor
+  // happens to load: no ?preview=1, no /admin, no /install. The APK is
+  // exclusively an end-user surface.
+  const inCapacitor = typeof window !== 'undefined' && (
+    !!window.Capacitor ||
+    /Capacitor|Ionic/i.test(navigator.userAgent || '') ||
+    (location.hostname === 'localhost' && location.protocol === 'https:' && location.port === '')
+  );
+
+  const adminMode   = !inCapacitor && (/^\/admin(\/|$)/.test(path) || (qs && qs.get('admin')));
+  const previewMode = !inCapacitor && qs && qs.get('preview') === '1';
 
   if (installMode && typeof InstallPage === 'function') {
     return (
