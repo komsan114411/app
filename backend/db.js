@@ -5,7 +5,14 @@ import { env } from './config/env.js';
 import { log } from './utils/logger.js';
 
 mongoose.set('strictQuery', true);
-mongoose.set('sanitizeFilter', true);   // strips $ operators from query objects
+// NOTE: `sanitizeFilter` is intentionally NOT set globally. When enabled it
+// wraps every filter value in $eq unless explicitly marked mongoose.trusted(),
+// which broke every server-side query using {$gt}, {$lt}, {$in}, {$regex},
+// etc. (RefreshToken.expiresAt cast errors were the symptom). User input
+// reaching queries is already scrubbed by express-mongo-sanitize at the
+// request level plus zod .strict() schemas, and no code spreads req.body
+// directly into a filter — so turning this off restores normal operator
+// behaviour without widening the injection surface.
 mongoose.set('autoIndex', env.NODE_ENV !== 'production');   // manage indexes explicitly in prod
 
 export async function connectDB() {

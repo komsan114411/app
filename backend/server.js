@@ -59,6 +59,26 @@ log.info({ STATIC_ROOT, UPLOAD_ROOT }, 'paths_resolved');
 
 const app = express();
 
+// ── Async error forwarding (Express 4 compat) ──────────────
+// Express 4 does not await the promise returned by async route handlers,
+// so any `throw` inside an async handler becomes an unhandledRejection
+// instead of hitting the error-handling middleware. Patch the Router's
+// Layer so promises are awaited and rejections get forwarded to next().
+// This makes async errors become proper 500 responses with structured
+// logs, not silent drops.
+import('express/lib/router/layer.js').then(({ default: Layer }) => {
+  const orig = Layer.prototype.handle_request;
+  Layer.prototype.handle_request = function (req, res, next) {
+    const fn = this.handle;
+    // Error-handling layers have arity 4; leave them alone.
+    if (fn.length > 3) return orig.call(this, req, res, next);
+    try {
+      const ret = fn(req, res, next);
+      if (ret && typeof ret.then === 'function') ret.catch(next);
+    } catch (err) { next(err); }
+  };
+}).catch(err => log.warn({ err: err.message }, 'async_layer_patch_failed'));
+
 // ── Baseline hardening ──────────────────────────────────────
 app.disable('x-powered-by');
 app.set('trust proxy', env.TRUST_PROXY);
