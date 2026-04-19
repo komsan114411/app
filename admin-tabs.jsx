@@ -177,6 +177,19 @@ function friendlyPasswordError(code) {
 }
 
 // ─── Users tab: list + search + actions + add ───────────────
+// Safe confirm wrapper: some embedded/iframe contexts (demo dual-view)
+// can land the toast modal off-screen. Fall through to the browser's
+// native confirm whenever the toast helper isn't available so the
+// admin never ends up clicking a button and seeing nothing happen.
+function safeConfirm(message, okLabel, cancelLabel, opts) {
+  try {
+    if (typeof toast !== 'undefined' && toast && typeof toast.confirm === 'function') {
+      return toast.confirm(message, okLabel || 'ยืนยัน', cancelLabel || 'ยกเลิก', opts || {});
+    }
+  } catch {}
+  return Promise.resolve(typeof window !== 'undefined' && window.confirm ? window.confirm(message) : true);
+}
+
 function UsersTab({ currentUserId }) {
   const [rows, setRows] = React.useState([]);
   const [loading, setLoading] = React.useState(true);
@@ -186,6 +199,9 @@ function UsersTab({ currentUserId }) {
   const [role, setRole] = React.useState('');
   const [page, setPage] = React.useState(1);
   const [totalPages, setTotalPages] = React.useState(1);
+  // Which row is currently processing a click — disables the row's
+  // buttons and shows a spinner so the admin knows something happened.
+  const [busyId, setBusyId] = React.useState('');
 
   const load = React.useCallback(async () => {
     setLoading(true); setError(null);
@@ -200,8 +216,10 @@ function UsersTab({ currentUserId }) {
   React.useEffect(() => { load(); }, [load]);
 
   const act = async (id, action) => {
-    const ok = await toast.confirm(confirmText(action), 'ยืนยัน', 'ยกเลิก', { tone: action === 'disable' ? 'danger' : 'default' });
-    if (!ok) return;
+    if (typeof console !== 'undefined') console.info('[admin-action] click', action, id);
+    const ok = await safeConfirm(confirmText(action), 'ยืนยัน', 'ยกเลิก', { tone: action === 'disable' ? 'danger' : 'default' });
+    if (!ok) { if (typeof console !== 'undefined') console.info('[admin-action] cancelled by user'); return; }
+    setBusyId(id);
     try {
       await api.userAction(id, action);
       toast.success(action === 'revoke-sessions' ? 'เตะออกทุกเซสชันแล้ว'
@@ -210,49 +228,64 @@ function UsersTab({ currentUserId }) {
                    : 'ดำเนินการสำเร็จ');
       await load();
     } catch (e) {
-      if (typeof console !== 'undefined') console.error('[admin-action]', action, id, e.message);
-      toast.error(friendlyUserActionError(e.message) + ' · ' + e.message);
-    }
+      if (typeof console !== 'undefined') console.error('[admin-action] FAIL', action, id, e.message);
+      toast.error(friendlyUserActionError(e.message) + ' · ' + (e.message || '?'));
+    } finally { setBusyId(''); }
   };
 
   const changeRole = async (id, nextRole) => {
-    const ok = await toast.confirm(`เปลี่ยนสิทธิ์เป็น "${nextRole}"?`, 'ยืนยัน');
+    if (typeof console !== 'undefined') console.info('[admin-changeRole] click', id, nextRole);
+    const ok = await safeConfirm(`เปลี่ยนสิทธิ์เป็น "${nextRole}"?`, 'ยืนยัน');
     if (!ok) return;
+    setBusyId(id);
     try {
       await api.changeRole(id, nextRole);
       toast.success('เปลี่ยนสิทธิ์เป็น ' + nextRole + ' แล้ว');
       await load();
     } catch (e) {
-      if (typeof console !== 'undefined') console.error('[admin-changeRole]', id, nextRole, e.message);
-      toast.error(friendlyUserActionError(e.message) + ' · ' + e.message);
-    }
+      if (typeof console !== 'undefined') console.error('[admin-changeRole] FAIL', id, nextRole, e.message);
+      toast.error(friendlyUserActionError(e.message) + ' · ' + (e.message || '?'));
+    } finally { setBusyId(''); }
   };
 
   const resetPw = async (id, loginId) => {
-    const ok = await toast.confirm(
+    if (typeof console !== 'undefined') console.info('[admin-resetPw] click', id, loginId);
+    const ok = await safeConfirm(
       `รีเซ็ตรหัสของ "${loginId}"? ระบบจะสร้างรหัสชั่วคราวและบังคับเปลี่ยนตอน login ครั้งถัดไป`,
       'รีเซ็ตรหัส', 'ยกเลิก', { tone: 'danger' }
     );
     if (!ok) return;
+    setBusyId(id);
     try {
       const r = await api.resetUserPassword(id);
       const tempPw = (r && r.tempPassword) || '';
-      // Show the temp password in a confirm dialog so admin can copy it.
-      // "OK" closes the dialog without copying, "Cancel" copies instead
-      // (dialog convention here flips the primary action label).
-      const closedOk = await toast.confirm(
-        `รหัสผ่านชั่วคราวของ ${loginId}:\n\n${tempPw}\n\nคัดลอกและส่งให้ผู้ใช้ · ไม่แสดงซ้ำ`,
-        'ปิด', 'คัดลอกลง clipboard', { tone: 'default' }
-      );
-      if (!closedOk) {
-        try { await navigator.clipboard.writeText(tempPw); toast.success('คัดลอกรหัสชั่วคราวแล้ว'); }
-        catch { toast.error('คัดลอกไม่สำเร็จ — กด Ctrl+C เอง'); }
+      // Try modern clipboard first, otherwise show a prompt the admin can
+      // select+copy manually — saving the admin from a failed-silent copy.
+      let copied = false;
+      try {
+        if (navigator && navigator.clipboard && navigator.clipboard.writeText) {
+          await navigator.clipboard.writeText(tempPw);
+          copied = true;
+        }
+      } catch {}
+      if (copied) {
+        toast.success(`รีเซ็ตแล้ว · คัดลอกรหัสชั่วคราวของ ${loginId} ไปยัง clipboard เรียบร้อย`);
+        // Still show the password so admin can double-check.
+        await safeConfirm(`รหัสผ่านชั่วคราวของ ${loginId}:\n\n${tempPw}\n\n(คัดลอกแล้ว — กดปิดเพื่อดำเนินการต่อ)`, 'ปิด');
+      } else {
+        // Fallback: native prompt lets the admin Ctrl+C out of it.
+        if (typeof window !== 'undefined' && window.prompt) {
+          window.prompt(`รหัสผ่านชั่วคราวของ ${loginId} (กด Ctrl+C เพื่อคัดลอก):`, tempPw);
+        } else {
+          await safeConfirm(`รหัสผ่านชั่วคราวของ ${loginId}:\n\n${tempPw}`, 'ปิด');
+        }
+        toast.info('คัดลอกอัตโนมัติไม่ได้ — คัดลอกด้วยมือจาก dialog');
       }
       await load();
     } catch (e) {
-      if (typeof console !== 'undefined') console.error('[admin-resetPw]', id, e.message);
-      toast.error(friendlyUserActionError(e.message) + ' · ' + e.message);
-    }
+      if (typeof console !== 'undefined') console.error('[admin-resetPw] FAIL', id, e.message);
+      toast.error(friendlyUserActionError(e.message) + ' · ' + (e.message || '?'));
+    } finally { setBusyId(''); }
   };
 
   return (
@@ -289,8 +322,9 @@ function UsersTab({ currentUserId }) {
         {rows.map(u => {
           const isSelf = String(u._id) === String(currentUserId);
           const disabled = !!u.disabledAt;
+          const rowBusy = busyId === String(u._id);
           return (
-            <Card key={u._id} style={{ padding: 14 }}>
+            <Card key={u._id} style={{ padding: 14, opacity: rowBusy ? 0.6 : 1, transition: 'opacity 160ms' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
                 <div style={{
                   width: 40, height: 40, borderRadius: 11, background: '#1F1B17', color: '#fff',
@@ -305,6 +339,7 @@ function UsersTab({ currentUserId }) {
                     {disabled ? <Pill tone="danger">ปิดใช้งาน</Pill> : <Pill tone="success">ใช้งาน</Pill>}
                     {u.totpEnabled && <Pill tone="success">2FA</Pill>}
                     {u.mustChangePassword && <Pill tone="warn">ต้องตั้งรหัสใหม่</Pill>}
+                    {rowBusy && <Pill tone="warn">กำลังทำงาน…</Pill>}
                   </div>
                   <div style={{ fontSize: 11, color: '#8F877C', marginTop: 3 }}>
                     เข้าสู่ระบบล่าสุด: {fmtTime(u.lastLoginAt)}
@@ -313,21 +348,26 @@ function UsersTab({ currentUserId }) {
                 </div>
                 <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
                   {!isSelf && (
-                    <button onClick={() => changeRole(u._id, u.role === 'admin' ? 'editor' : 'admin')} style={{ ...pillBtn, color: '#1F1B17' }}>
+                    <button onClick={() => changeRole(u._id, u.role === 'admin' ? 'editor' : 'admin')}
+                      disabled={rowBusy}
+                      style={{ ...pillBtn, color: '#1F1B17', cursor: rowBusy ? 'wait' : 'pointer' }}>
                       {u.role === 'admin' ? '→ editor' : '→ admin'}
                     </button>
                   )}
                   <button onClick={() => resetPw(u._id, u.loginId)}
+                    disabled={rowBusy}
                     title={isSelf ? 'รีเซ็ตรหัสตัวเอง: แนะนำใช้แท็บ "ความปลอดภัย" แทน' : 'สร้างรหัสชั่วคราว'}
-                    style={{ ...pillBtn, color: '#7A5A10' }}>รีเซ็ตรหัส</button>
+                    style={{ ...pillBtn, color: '#7A5A10', cursor: rowBusy ? 'wait' : 'pointer' }}>รีเซ็ตรหัส</button>
                   {disabled
-                    ? <button onClick={() => act(u._id, 'enable')} style={{ ...pillBtn, color: '#058850' }}>เปิด</button>
-                    : <button onClick={() => act(u._id, 'disable')} disabled={isSelf}
+                    ? <button onClick={() => act(u._id, 'enable')} disabled={rowBusy}
+                        style={{ ...pillBtn, color: '#058850', cursor: rowBusy ? 'wait' : 'pointer' }}>เปิด</button>
+                    : <button onClick={() => act(u._id, 'disable')} disabled={isSelf || rowBusy}
                         title={isSelf ? 'ปิดบัญชีตัวเองไม่ได้' : 'ปิดบัญชี + เตะออกทุกเซสชัน'}
-                        style={{ ...pillBtn, color: '#B4463A', opacity: isSelf ? 0.3 : 1, cursor: isSelf ? 'not-allowed' : 'pointer' }}>ปิด</button>}
+                        style={{ ...pillBtn, color: '#B4463A', opacity: (isSelf || rowBusy) ? 0.3 : 1, cursor: (isSelf || rowBusy) ? 'not-allowed' : 'pointer' }}>ปิด</button>}
                   <button onClick={() => act(u._id, 'revoke-sessions')}
+                    disabled={rowBusy}
                     title="บังคับ logout อุปกรณ์ทั้งหมดของผู้ใช้รายนี้"
-                    style={{ ...pillBtn, color: '#7A5A10' }}>เตะออก</button>
+                    style={{ ...pillBtn, color: '#7A5A10', cursor: rowBusy ? 'wait' : 'pointer' }}>เตะออก</button>
                 </div>
               </div>
             </Card>
