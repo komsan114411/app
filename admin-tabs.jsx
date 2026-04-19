@@ -202,6 +202,15 @@ function UsersTab({ currentUserId }) {
   // Which row is currently processing a click — disables the row's
   // buttons and shows a spinner so the admin knows something happened.
   const [busyId, setBusyId] = React.useState('');
+  // Always-visible activity line at the top of the tab. Any click, any
+  // success, any failure lands here so the admin has proof the button
+  // registered — no need to open DevTools.
+  const [activity, setActivity] = React.useState('');
+  const logActivity = (kind, msg) => {
+    const ts = new Date().toLocaleTimeString('th-TH', { hour12: false });
+    setActivity(`[${ts}] ${kind.toUpperCase()} · ${msg}`);
+    if (typeof console !== 'undefined') console.info('[users-tab]', kind, msg);
+  };
 
   const load = React.useCallback(async () => {
     setLoading(true); setError(null);
@@ -216,51 +225,57 @@ function UsersTab({ currentUserId }) {
   React.useEffect(() => { load(); }, [load]);
 
   const act = async (id, action) => {
-    if (typeof console !== 'undefined') console.info('[admin-action] click', action, id);
+    logActivity('click', `${action} on ${id}`);
     const ok = await safeConfirm(confirmText(action), 'ยืนยัน', 'ยกเลิก', { tone: action === 'disable' ? 'danger' : 'default' });
-    if (!ok) { if (typeof console !== 'undefined') console.info('[admin-action] cancelled by user'); return; }
+    if (!ok) { logActivity('cancel', action); return; }
     setBusyId(id);
+    logActivity('request', `POST /api/admin/users/${id}/${action}`);
     try {
       await api.userAction(id, action);
-      toast.success(action === 'revoke-sessions' ? 'เตะออกทุกเซสชันแล้ว'
-                   : action === 'disable' ? 'ปิดบัญชีแล้ว'
-                   : action === 'enable'  ? 'เปิดบัญชีแล้ว'
-                   : 'ดำเนินการสำเร็จ');
+      const msg = action === 'revoke-sessions' ? 'เตะออกทุกเซสชันแล้ว'
+               : action === 'disable'         ? 'ปิดบัญชีแล้ว'
+               : action === 'enable'          ? 'เปิดบัญชีแล้ว'
+               : 'ดำเนินการสำเร็จ';
+      logActivity('ok', msg);
+      toast.success(msg);
       await load();
     } catch (e) {
-      if (typeof console !== 'undefined') console.error('[admin-action] FAIL', action, id, e.message);
+      logActivity('fail', `${action} · ${e.message || '?'}`);
       toast.error(friendlyUserActionError(e.message) + ' · ' + (e.message || '?'));
     } finally { setBusyId(''); }
   };
 
   const changeRole = async (id, nextRole) => {
-    if (typeof console !== 'undefined') console.info('[admin-changeRole] click', id, nextRole);
+    logActivity('click', `change role of ${id} → ${nextRole}`);
     const ok = await safeConfirm(`เปลี่ยนสิทธิ์เป็น "${nextRole}"?`, 'ยืนยัน');
-    if (!ok) return;
+    if (!ok) { logActivity('cancel', 'changeRole'); return; }
     setBusyId(id);
+    logActivity('request', `PATCH /api/admin/users/${id}/role → ${nextRole}`);
     try {
       await api.changeRole(id, nextRole);
+      logActivity('ok', `role now ${nextRole}`);
       toast.success('เปลี่ยนสิทธิ์เป็น ' + nextRole + ' แล้ว');
       await load();
     } catch (e) {
-      if (typeof console !== 'undefined') console.error('[admin-changeRole] FAIL', id, nextRole, e.message);
+      logActivity('fail', `changeRole · ${e.message || '?'}`);
       toast.error(friendlyUserActionError(e.message) + ' · ' + (e.message || '?'));
     } finally { setBusyId(''); }
   };
 
   const resetPw = async (id, loginId) => {
-    if (typeof console !== 'undefined') console.info('[admin-resetPw] click', id, loginId);
+    logActivity('click', `reset password of ${loginId}`);
     const ok = await safeConfirm(
       `รีเซ็ตรหัสของ "${loginId}"? ระบบจะสร้างรหัสชั่วคราวและบังคับเปลี่ยนตอน login ครั้งถัดไป`,
       'รีเซ็ตรหัส', 'ยกเลิก', { tone: 'danger' }
     );
-    if (!ok) return;
+    if (!ok) { logActivity('cancel', 'resetPw'); return; }
     setBusyId(id);
+    logActivity('request', `POST /api/admin/users/${id}/reset-password`);
     try {
       const r = await api.resetUserPassword(id);
       const tempPw = (r && r.tempPassword) || '';
-      // Try modern clipboard first, otherwise show a prompt the admin can
-      // select+copy manually — saving the admin from a failed-silent copy.
+      // Try clipboard but NEVER block on a second modal — chaining two
+      // confirms can race with toast state.
       let copied = false;
       try {
         if (navigator && navigator.clipboard && navigator.clipboard.writeText) {
@@ -269,21 +284,19 @@ function UsersTab({ currentUserId }) {
         }
       } catch {}
       if (copied) {
-        toast.success(`รีเซ็ตแล้ว · คัดลอกรหัสชั่วคราวของ ${loginId} ไปยัง clipboard เรียบร้อย`);
-        // Still show the password so admin can double-check.
-        await safeConfirm(`รหัสผ่านชั่วคราวของ ${loginId}:\n\n${tempPw}\n\n(คัดลอกแล้ว — กดปิดเพื่อดำเนินการต่อ)`, 'ปิด');
+        logActivity('ok', `reset ${loginId} · password copied`);
+        toast.success(`รีเซ็ตแล้ว · รหัส "${tempPw}" คัดลอกแล้ว`, 9000);
       } else {
-        // Fallback: native prompt lets the admin Ctrl+C out of it.
+        logActivity('ok', `reset ${loginId} · no clipboard`);
+        // Native prompt gives the admin a guaranteed copy surface.
         if (typeof window !== 'undefined' && window.prompt) {
           window.prompt(`รหัสผ่านชั่วคราวของ ${loginId} (กด Ctrl+C เพื่อคัดลอก):`, tempPw);
-        } else {
-          await safeConfirm(`รหัสผ่านชั่วคราวของ ${loginId}:\n\n${tempPw}`, 'ปิด');
         }
-        toast.info('คัดลอกอัตโนมัติไม่ได้ — คัดลอกด้วยมือจาก dialog');
+        toast.info(`รหัสชั่วคราว: ${tempPw}`, 12000);
       }
       await load();
     } catch (e) {
-      if (typeof console !== 'undefined') console.error('[admin-resetPw] FAIL', id, e.message);
+      logActivity('fail', `resetPw · ${e.message || '?'}`);
       toast.error(friendlyUserActionError(e.message) + ' · ' + (e.message || '?'));
     } finally { setBusyId(''); }
   };
@@ -301,6 +314,39 @@ function UsersTab({ currentUserId }) {
           </div>
         }/>
       {showAdd && <AddAdminDialog onClose={() => setShowAdd(false)} onCreated={() => { setShowAdd(false); load(); }}/>}
+
+      {/* Activity bar: proves the button registered a click without requiring DevTools. */}
+      {activity && (
+        <div style={{
+          marginBottom: 10, padding: '6px 10px', borderRadius: 8,
+          background: activity.includes('FAIL') ? 'rgba(180,70,58,0.08)'
+                    : activity.includes('OK') ? 'rgba(6,199,85,0.08)'
+                    : '#F3EFE7',
+          color: activity.includes('FAIL') ? '#B4463A'
+                : activity.includes('OK') ? '#058850'
+                : '#3E3A34',
+          fontSize: 11, fontFamily: 'ui-monospace, monospace',
+          display: 'flex', alignItems: 'center', gap: 8,
+        }}>
+          <span style={{ flex: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{activity}</span>
+          <button onClick={async () => {
+            logActivity('ping', 'GET /api/admin/me ...');
+            try {
+              const me = await api.me();
+              logActivity('ok', `ping: admin=${me.loginId} role=${me.role}`);
+            } catch (e) {
+              logActivity('fail', `ping · ${e.message || '?'}`);
+            }
+          }} style={{
+            padding: '3px 10px', borderRadius: 6, border: '1px solid rgba(0,0,0,0.12)',
+            background: '#fff', fontFamily: 'inherit', fontSize: 10, cursor: 'pointer',
+          }}>🔄 Ping API</button>
+          <button onClick={() => setActivity('')} style={{
+            padding: '3px 8px', borderRadius: 6, border: 'none',
+            background: 'transparent', fontFamily: 'inherit', fontSize: 10, cursor: 'pointer', opacity: 0.6,
+          }}>✕</button>
+        </div>
+      )}
 
       <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
         <input type="text" value={q} placeholder="ค้นหา login ID / ชื่อ..." onChange={e => { setQ(e.target.value.slice(0, 64)); setPage(1); }}

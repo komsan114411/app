@@ -33,6 +33,12 @@ const toast = {
   dismiss: (id) => _remove(id),
   confirm(title, okLabel = 'ตกลง', cancelLabel = 'ยกเลิก', { tone = 'default' } = {}) {
     return new Promise(resolve => {
+      // If a previous confirm is still open, resolve it as cancelled so
+      // the caller doesn't hang forever waiting on a modal that just got
+      // overwritten by a second call.
+      if (_state.confirm && typeof _state.confirm.resolve === 'function') {
+        try { _state.confirm.resolve(false); } catch {}
+      }
       _state.confirm = { title, okLabel, cancelLabel, tone, resolve };
       _emit();
     });
