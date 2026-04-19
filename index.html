@@ -103,6 +103,76 @@
     0%,100% { opacity: 1; }
     50%     { opacity: 0.4; }
   }
+
+  /* ── First-launch splash animation ─────────────────────────
+     Shown only on the truly-first app open on a device (no
+     public_cache_v1 yet). Three layered animations for a premium
+     feel: morphing conic gradient backdrop, icon that pops in with
+     an expanding halo, and three staggered loading dots. */
+  .splash-root {
+    position: fixed; inset: 0; z-index: 9999;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 28px;
+    overflow: hidden;
+    background: #1F1B17;
+    animation: splashFadeOut 420ms cubic-bezier(0.4, 0, 0.2, 1) both;
+    animation-play-state: paused;
+  }
+  .splash-root.splash-exit { animation-play-state: running; }
+  @keyframes splashFadeOut {
+    from { opacity: 1; }
+    to   { opacity: 0; visibility: hidden; }
+  }
+  .splash-bg {
+    position: absolute; inset: -40%;
+    background: conic-gradient(from 0deg,
+      #C48B3E, #B4463A, #7A5A10, #C48B3E);
+    filter: blur(80px); opacity: 0.55;
+    animation: splashSwirl 9s linear infinite;
+  }
+  @keyframes splashSwirl {
+    from { transform: rotate(0deg); }
+    to   { transform: rotate(360deg); }
+  }
+  .splash-icon {
+    position: relative;
+    width: 92px; height: 92px; border-radius: 26px;
+    background: rgba(255,255,255,0.98);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 42px; font-weight: 800; color: #1F1B17;
+    box-shadow:
+      0 30px 80px -20px rgba(196,139,62,0.6),
+      0 0 0 1px rgba(255,255,255,0.1);
+    animation: splashIconIn 700ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+  }
+  @keyframes splashIconIn {
+    from { opacity: 0; transform: scale(0.4) rotate(-12deg); }
+    to   { opacity: 1; transform: scale(1) rotate(0deg); }
+  }
+  .splash-icon::before {
+    content: '';
+    position: absolute; inset: -12px; border-radius: 32px;
+    border: 2px solid rgba(255,255,255,0.3);
+    animation: splashHalo 1.8s ease-out infinite;
+  }
+  @keyframes splashHalo {
+    0%   { transform: scale(1);   opacity: 0.8; }
+    100% { transform: scale(1.5); opacity: 0;   }
+  }
+  .splash-dots {
+    display: flex; gap: 8px;
+  }
+  .splash-dots span {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: rgba(255,255,255,0.85);
+    animation: splashDot 1.2s ease-in-out infinite;
+  }
+  .splash-dots span:nth-child(2) { animation-delay: 0.16s; }
+  .splash-dots span:nth-child(3) { animation-delay: 0.32s; }
+  @keyframes splashDot {
+    0%, 80%, 100% { transform: translateY(0);    opacity: 0.4; }
+    40%           { transform: translateY(-6px); opacity: 1;   }
+  }
   .caption {
     font-size: 11px; letter-spacing: 1.2px; text-transform: uppercase;
     color: #8F877C; font-weight: 600; margin-bottom: 10px; text-align: center;
@@ -734,32 +804,46 @@ function UserOnlyPage() {
 
   const bg = (THEMES[state.theme] || THEMES.cream).bg;
 
-  // Truly-first launch (no cache, no fetch yet) → render splash only.
-  // Prevents the "บ้านสวนออร์แกนิก" demo data from flashing.
-  if (!hydrated) {
-    return (
-      <div style={{
-        minHeight: '100vh', width: '100%', background: bg,
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-      }}>
-        <div style={{
-          width: 56, height: 56, borderRadius: 14,
-          background: 'rgba(0,0,0,0.04)',
-          animation: 'pulse 1200ms ease-in-out infinite',
-        }}/>
-      </div>
-    );
-  }
-
+  // Truly-first launch (no cache, no fetch yet) → render premium splash.
+  // Once hydrated becomes true the splash fades out while UserApp is
+  // already mounted behind it, so there's no visible jump.
   return (
     <div style={{ minHeight: '100vh', width: '100%', background: bg }}>
-      <UserApp
-        state={state}
-        pageKey={pageKey}
-        fullscreen={true}
-        onButtonPress={(b) => { if (liveMode) api.trackClick(b.id, b.label); }}
-      />
-      {liveMode && typeof ConsentBanner === 'function' && <ConsentBanner/>}
+      {hydrated && (
+        <>
+          <UserApp
+            state={state}
+            pageKey={pageKey}
+            fullscreen={true}
+            onButtonPress={(b) => { if (liveMode) api.trackClick(b.id, b.label); }}
+          />
+          {liveMode && typeof ConsentBanner === 'function' && <ConsentBanner/>}
+        </>
+      )}
+      {!hydrated && <FirstLaunchSplash appName={state.appName} appIcon={state.appIcon}/>}
+    </div>
+  );
+}
+
+// Premium splash — only shown on the FIRST-EVER app open on a device
+// (public_cache_v1 empty). Three layered effects:
+//   • conic-gradient backdrop that slowly rotates
+//   • icon tile that pops in with a spring + expanding halo ring
+//   • three staggered loading dots
+// Swaps to UserApp when hydrated, so the animation runs for exactly
+// as long as the backend fetch takes (usually 200-600ms).
+function FirstLaunchSplash({ appName, appIcon }) {
+  const letter = ((appName || 'A').trim().slice(0, 1) || 'A').toUpperCase();
+  const iconSrc = (appIcon && typeof absolutizeMedia === 'function') ? absolutizeMedia(appIcon) : appIcon;
+  return (
+    <div className="splash-root">
+      <div className="splash-bg"/>
+      <div className="splash-icon">
+        {iconSrc
+          ? <img src={iconSrc} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 26 }}/>
+          : letter}
+      </div>
+      <div className="splash-dots"><span/><span/><span/></div>
     </div>
   );
 }
