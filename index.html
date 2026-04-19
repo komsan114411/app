@@ -159,48 +159,31 @@ if ('serviceWorker' in navigator && location.protocol !== 'file:') {
 }
 </script>
 
-<!--
-  Path-based script loading. The public URL (/) must NEVER ship admin
-  JS — no AuthGate, no AdminShell, no admin-tabs — so a visitor can't
-  inspect the page source and discover a login form, and no code paths
-  exist that could accidentally flash login UI during boot.
-  document.write during parsing is fine here: the inserted <script>
-  tags land in the DOM before DOMContentLoaded, and Babel-standalone
-  picks them up in its normal scan. This is deliberate; modern bundlers
-  aren't in play because the whole stack runs off Babel Standalone.
--->
-<script>
-(function () {
-  const path = (location.pathname || '/').replace(/\/+$/, '') || '/';
-  const qs = new URLSearchParams(location.search);
-  const adminMode   = /^\/admin(\/|$)/.test(path) || qs.get('admin') === '1' || qs.get('preview') === '1';
-  const installMode = /^\/(install|download)(\/|$)/.test(path) || qs.get('page') === 'install';
-
-  const common = [
-    'security.jsx', 'icons.jsx', 'app-state.jsx', 'api-client.jsx',
-    'toast.jsx', 'online-indicator.jsx'
-  ];
-  const publicOnly  = ['consent-banner.jsx', 'user-app.jsx'];
-  const installExtra = ['qr-share.jsx', 'consent-banner.jsx', 'install-page.jsx'];
-  const adminExtra = [
-    'saved-indicator.jsx', 'chart.jsx', 'qr-share.jsx', 'drag-list.jsx',
-    'ios-frame.jsx', 'browser-window.jsx', 'download-links.jsx',
-    'install-share.jsx', 'install-page.jsx', 'user-app.jsx',
-    'auth-gate.jsx', 'twofa-setup.jsx', 'session-list.jsx',
-    'admin-app.jsx', 'admin-tabs.jsx', 'system-status.jsx',
-    'push-setup.jsx', 'dashboard-tab.jsx', 'consent-banner.jsx'
-  ];
-
-  let list = common.slice();
-  if (adminMode)       list = list.concat(adminExtra);
-  else if (installMode) list = list.concat(installExtra);
-  else                  list = list.concat(publicOnly);
-
-  for (const src of list) {
-    document.write('<script type="text/babel" src="' + src + '"><\/script>');
-  }
-})();
-</script>
+<script type="text/babel" src="security.jsx"></script>
+<script type="text/babel" src="icons.jsx"></script>
+<script type="text/babel" src="app-state.jsx"></script>
+<script type="text/babel" src="api-client.jsx"></script>
+<script type="text/babel" src="toast.jsx"></script>
+<script type="text/babel" src="online-indicator.jsx"></script>
+<script type="text/babel" src="saved-indicator.jsx"></script>
+<script type="text/babel" src="chart.jsx"></script>
+<script type="text/babel" src="qr-share.jsx"></script>
+<script type="text/babel" src="drag-list.jsx"></script>
+<script type="text/babel" src="ios-frame.jsx"></script>
+<script type="text/babel" src="browser-window.jsx"></script>
+<script type="text/babel" src="download-links.jsx"></script>
+<script type="text/babel" src="install-share.jsx"></script>
+<script type="text/babel" src="install-page.jsx"></script>
+<script type="text/babel" src="user-app.jsx"></script>
+<script type="text/babel" src="auth-gate.jsx"></script>
+<script type="text/babel" src="twofa-setup.jsx"></script>
+<script type="text/babel" src="session-list.jsx"></script>
+<script type="text/babel" src="admin-app.jsx"></script>
+<script type="text/babel" src="admin-tabs.jsx"></script>
+<script type="text/babel" src="system-status.jsx"></script>
+<script type="text/babel" src="push-setup.jsx"></script>
+<script type="text/babel" src="dashboard-tab.jsx"></script>
+<script type="text/babel" src="consent-banner.jsx"></script>
 
 <script type="text/babel" data-presets="react">
 const { useState, useEffect, useMemo, useRef } = React;
