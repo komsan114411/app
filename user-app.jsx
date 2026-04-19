@@ -282,8 +282,16 @@ function UserApp({ state, pageKey, onButtonPress, fullscreen = false }) {
   const rawIcon = (typeof safeUrl === 'function' && state.appIcon) ? safeUrl(state.appIcon) : state.appIcon;
   const iconSrc = (typeof absolutizeMedia === 'function') ? absolutizeMedia(rawIcon) : rawIcon;
 
+  // In admin preview mode we want the entry animation to replay on every
+  // theme/button/banner change so the admin sees the effect of their
+  // edits. On the real public surface (fullscreen=true) that replay
+  // looks like a page flip every time /api/config polls an update,
+  // which the user correctly complained about as "สลับหน้า". So we
+  // only key the outer div in preview mode.
+  const outerKey = fullscreen ? undefined : pageKey;
+
   return (
-    <div key={pageKey} style={{
+    <div key={outerKey} style={{
       minHeight: '100%', background: theme.bg, paddingBottom: 40, position: 'relative',
       fontFamily: '"IBM Plex Sans Thai", -apple-system, system-ui, sans-serif',
       color: theme.ink,
