@@ -28,7 +28,10 @@ function TwoFactorSetup({ me, onChanged }) {
       setStage('backup');
       onChanged?.();
       toast.success('เปิดใช้งาน 2FA สำเร็จ');
-    } catch (e) { toast.error(friendly2faError(e.message)); }
+    } catch (e) {
+      toast.error(friendly2faError(e.message));
+      if (e.message === 'setup_expired') { setStage('idle'); setQr(null); setSecret(''); }
+    }
     finally { setBusy(false); setCode(''); }
   };
 
@@ -207,6 +210,8 @@ function friendly2faError(code) {
   switch (code) {
     case 'invalid_totp':       return 'โค้ดไม่ถูกต้อง';
     case 'no_pending_setup':   return 'ไม่พบการตั้งค่าค้างอยู่';
+    case 'setup_expired':      return 'การตั้งค่า 2FA หมดอายุ (15 นาที) — เริ่มใหม่';
+    case 'already_enabled':    return '2FA เปิดใช้อยู่แล้ว';
     case 'invalid_credentials':return 'รหัสผ่านไม่ถูกต้อง';
     default:                   return 'ดำเนินการไม่สำเร็จ';
   }

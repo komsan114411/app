@@ -15,7 +15,7 @@ import { verifyCsrf } from '../middleware/csrf.js';
 import { adminWriteLimiter, uploadLimiter } from '../middleware/rateLimit.js';
 import { validate, configBody, createUserBody } from '../middleware/validate.js';
 import { uploadSingle } from '../middleware/upload.js';
-import { sanitizeConfig, hashIp, safeText } from '../utils/sanitize.js';
+import { sanitizeConfig, hashIp, safeText, safeUrl } from '../utils/sanitize.js';
 import { revokeAllForUser, revokeOne } from '../utils/tokens.js';
 import { generateSecret, qrDataUrl, verifyToken as verifyTotp, generateBackupCodes, hashBackupCode } from '../utils/totp.js';
 import { toCsvStream } from '../utils/csv.js';
@@ -430,18 +430,55 @@ async function isLastActiveAdmin(userId) {
   return count === 0;
 }
 
+// Atomically disable a user ONLY if they're not the last active admin.
+// Uses a single updateOne with a compound predicate so two concurrent
+// disable calls cannot both succeed and leave zero admins.
+async function atomicDisableUser(targetId, actorId) {
+  // Phase 1: read target role so we only gate admins
+  const target = await User.findById(targetId);
+  if (!target) return { err: 'not_found' };
+  if (target.disabledAt) return { err: 'already_disabled', target };
+
+  if (target.role === 'admin') {
+    // Count OTHER active admins. If zero, reject.
+    // Then the update predicate checks again to close the race.
+    const others = await User.countDocuments({ role: 'admin', disabledAt: null, _id: { $ne: targetId } });
+    if (others === 0) return { err: 'last_admin' };
+
+    // Atomic update: only succeed if target is STILL not disabled.
+    // Another racing call would see disabledAt and fall through.
+    const r = await User.updateOne(
+      { _id: targetId, disabledAt: null, role: 'admin' },
+      { $set: { disabledAt: new Date(), disabledBy: actorId }, $inc: { tokenVersion: 1 } },
+    );
+    if (r.modifiedCount === 0) return { err: 'concurrent_modification' };
+    // After success, verify we still have >=1 active admin — if not,
+    // roll back (extremely rare race: two admins disabled simultaneously).
+    const remaining = await User.countDocuments({ role: 'admin', disabledAt: null });
+    if (remaining === 0) {
+      await User.updateOne({ _id: targetId }, { $set: { disabledAt: null, disabledBy: null } });
+      return { err: 'last_admin' };
+    }
+    return { ok: true, target };
+  }
+
+  // Non-admin: straightforward atomic disable
+  const r = await User.updateOne(
+    { _id: targetId, disabledAt: null },
+    { $set: { disabledAt: new Date(), disabledBy: actorId }, $inc: { tokenVersion: 1 } },
+  );
+  if (r.modifiedCount === 0) return { err: 'concurrent_modification' };
+  return { ok: true, target };
+}
+
 adminRouter.post('/users/:id/disable', requireRole('admin'), async (req, res) => {
   const p = userIdParam.safeParse(req.params);
   if (!p.success) return res.status(400).json({ error: 'invalid_id' });
   if (p.data.id === req.user.id) return res.status(400).json({ error: 'self_disable_forbidden' });
-  const target = await User.findById(p.data.id);
-  if (!target) return res.status(404).json({ error: 'not_found' });
-  if (target.role === 'admin' && await isLastActiveAdmin(target._id)) return res.status(400).json({ error: 'last_admin' });
-  target.disabledAt = new Date();
-  target.disabledBy = req.user.id;
-  await target.save();
+  const result = await atomicDisableUser(p.data.id, req.user.id);
+  if (result.err) return res.status(result.err === 'not_found' ? 404 : 400).json({ error: result.err });
+  const target = result.target;
   await revokeAllForUser(target._id, 'user_disabled');
-  await User.findOneAndUpdate({ _id: target._id }, { $inc: { tokenVersion: 1 } });
   await AuditLog.create({
     actorId: req.user.id, actorEmail: req.user.loginId,
     action: 'user_disable', target: 'User:' + String(target._id),
@@ -475,11 +512,27 @@ adminRouter.patch('/users/:id/role', requireRole('admin'), async (req, res) => {
   const target = await User.findById(p.data.id);
   if (!target) return res.status(404).json({ error: 'not_found' });
   if (String(target._id) === req.user.id && b.data.role !== 'admin') return res.status(400).json({ error: 'self_demote_forbidden' });
-  if (target.role === 'admin' && b.data.role !== 'admin' && await isLastActiveAdmin(target._id)) return res.status(400).json({ error: 'last_admin' });
   const before = target.role;
-  target.role = b.data.role;
-  await target.save();
-  await User.findOneAndUpdate({ _id: target._id }, { $inc: { tokenVersion: 1 } });
+
+  // Demoting last admin: atomic — update only if another active admin still exists.
+  if (before === 'admin' && b.data.role !== 'admin') {
+    const others = await User.countDocuments({ role: 'admin', disabledAt: null, _id: { $ne: target._id } });
+    if (others === 0) return res.status(400).json({ error: 'last_admin' });
+    const r = await User.updateOne(
+      { _id: target._id, role: 'admin' },
+      { $set: { role: b.data.role }, $inc: { tokenVersion: 1 } },
+    );
+    if (r.modifiedCount === 0) return res.status(409).json({ error: 'concurrent_modification' });
+    const remaining = await User.countDocuments({ role: 'admin', disabledAt: null });
+    if (remaining === 0) {
+      await User.updateOne({ _id: target._id }, { $set: { role: 'admin' } });
+      return res.status(400).json({ error: 'last_admin' });
+    }
+  } else {
+    target.role = b.data.role;
+    await target.save();
+    await User.findOneAndUpdate({ _id: target._id }, { $inc: { tokenVersion: 1 } });
+  }
   await AuditLog.create({
     actorId: req.user.id, actorEmail: req.user.loginId,
     action: 'user_role_change', target: 'User:' + String(target._id),
@@ -595,15 +648,23 @@ adminRouter.post('/me/sessions/revoke-all', async (req, res) => {
 });
 
 // ── 2FA / TOTP ──────────────────────────────────────────────
+// The setup window is limited: /setup stores a pending secret; /enable must
+// be called within TOTP_SETUP_TTL_MS while presenting a valid 6-digit code.
+// Without this TTL, an attacker who transiently controls a session could leave
+// a dormant secret in the DB and later brute-force the 6-digit code.
+const TOTP_SETUP_TTL_MS = 15 * 60 * 1000;
+
 adminRouter.post('/me/totp/setup', adminWriteLimiter, async (req, res) => {
   const me = await User.findById(req.user.id).select('+totpSecret');
   if (!me) return res.status(401).json({ error: 'unauthorized' });
+  if (me.totpEnabled) return res.status(400).json({ error: 'already_enabled' });
   const { base32, otpauth_url } = generateSecret(me.loginId);
   me.totpSecret = base32;
-  me.totpEnabled = false;       // not enabled until verify step
+  me.totpEnabled = false;
+  me.totpPendingAt = new Date();
   await me.save();
   const qr = await qrDataUrl(otpauth_url);
-  res.json({ secret: base32, qr });
+  res.json({ secret: base32, qr, expiresInMs: TOTP_SETUP_TTL_MS });
 });
 
 const totpEnableBody = z.object({ code: z.string().length(6).regex(/^\d+$/, 'digits_only') });
@@ -611,11 +672,18 @@ const totpEnableBody = z.object({ code: z.string().length(6).regex(/^\d+$/, 'dig
 adminRouter.post('/me/totp/enable', adminWriteLimiter, async (req, res) => {
   const p = totpEnableBody.safeParse(req.body);
   if (!p.success) return res.status(400).json({ error: 'invalid_input' });
-  const me = await User.findById(req.user.id).select('+totpSecret');
+  const me = await User.findById(req.user.id).select('+totpSecret +totpPendingAt');
   if (!me || !me.totpSecret) return res.status(400).json({ error: 'no_pending_setup' });
+  if (me.totpEnabled) return res.status(400).json({ error: 'already_enabled' });
+  if (!me.totpPendingAt || Date.now() - new Date(me.totpPendingAt).getTime() > TOTP_SETUP_TTL_MS) {
+    // Stale setup — clear and force restart
+    await User.updateOne({ _id: me._id }, { $set: { totpSecret: '', totpPendingAt: null } });
+    return res.status(400).json({ error: 'setup_expired' });
+  }
   if (!verifyTotp(me.totpSecret, p.data.code)) return res.status(400).json({ error: 'invalid_totp' });
   const codes = generateBackupCodes(10);
   me.totpEnabled = true;
+  me.totpPendingAt = null;
   me.totpBackupCodes = codes.map(hashBackupCode);
   await me.save();
   await AuditLog.create({
@@ -643,37 +711,85 @@ adminRouter.post('/me/totp/disable', adminWriteLimiter, async (req, res) => {
 });
 
 // ── Web Push broadcast (admin only) ─────────────────────────
+// The `url` field is validated through safeUrl so pushes can't deliver
+// javascript: / data: / cross-origin phishing URLs to subscribers who click
+// the notification. Sending runs with bounded concurrency and a per-call
+// timeout so a hung push endpoint can't tie up the server.
 const pushBody = z.object({
   title: z.string().min(1).max(80),
   body: z.string().max(200).optional(),
   url: z.string().max(2048).optional(),
 });
+const PUSH_CONCURRENCY = 10;
+const PUSH_TIMEOUT_MS = 5000;
+const PUSH_MAX_SUBS = 5000;
+
+function withTimeout(promise, ms) {
+  return new Promise((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error('push_timeout')), ms);
+    promise.then(v => { clearTimeout(t); resolve(v); },
+                 e => { clearTimeout(t); reject(e); });
+  });
+}
 
 adminRouter.post('/push/broadcast', adminWriteLimiter, requireRole('admin'), async (req, res) => {
   if (!env.PUSH_VAPID_PUBLIC || !env.PUSH_VAPID_PRIVATE) return res.status(400).json({ error: 'push_disabled' });
   const p = pushBody.safeParse(req.body);
   if (!p.success) return res.status(400).json({ error: 'invalid_input' });
-  const subs = await PushSubscription.find({}, {}).limit(5000).lean();
-  const payload = JSON.stringify({ title: p.data.title, body: p.data.body || '', url: p.data.url || '/' });
+
+  // Validate destination URL — reject anything safeUrl won't accept.
+  // Empty => default to root. Non-empty but rejected => 400 so the admin knows.
+  let safeClickUrl = '/';
+  if (p.data.url) {
+    const cleaned = safeUrl(p.data.url);
+    if (!cleaned && p.data.url.trim() !== '/') {
+      return res.status(400).json({ error: 'invalid_url' });
+    }
+    safeClickUrl = cleaned || '/';
+  }
+
+  const subs = await PushSubscription.find({}, {}).limit(PUSH_MAX_SUBS).lean();
+  const payload = JSON.stringify({
+    title: safeText(p.data.title, 80),
+    body: safeText(p.data.body || '', 200),
+    url: safeClickUrl,
+  });
+
   let sent = 0, failed = 0;
-  for (const s of subs) {
+  const staleEndpoints = [];
+
+  async function sendOne(s) {
     try {
-      await webPush.sendNotification({ endpoint: s.endpoint, keys: s.keys }, payload);
+      await withTimeout(
+        webPush.sendNotification({ endpoint: s.endpoint, keys: s.keys }, payload, { TTL: 60 }),
+        PUSH_TIMEOUT_MS,
+      );
       sent++;
     } catch (e) {
       failed++;
-      if (e.statusCode === 404 || e.statusCode === 410) {
-        await PushSubscription.deleteOne({ endpoint: s.endpoint });
+      if (e && (e.statusCode === 404 || e.statusCode === 410)) {
+        staleEndpoints.push(s.endpoint);
       }
     }
   }
+
+  // Bounded concurrency: process PUSH_CONCURRENCY subscriptions at a time.
+  for (let i = 0; i < subs.length; i += PUSH_CONCURRENCY) {
+    const batch = subs.slice(i, i + PUSH_CONCURRENCY);
+    await Promise.all(batch.map(sendOne));
+  }
+
+  if (staleEndpoints.length) {
+    try { await PushSubscription.deleteMany({ endpoint: { $in: staleEndpoints } }); } catch {}
+  }
+
   await AuditLog.create({
     actorId: req.user.id, actorEmail: req.user.loginId,
     action: 'push_broadcast', target: String(sent), outcome: 'success',
     ipHash: hashIp(req.ip), userAgent: safeText(req.get('user-agent') || '', 200),
-    diff: { title: p.data.title, sent, failed },
+    diff: { title: p.data.title, url: safeClickUrl, sent, failed, pruned: staleEndpoints.length },
   });
-  res.json({ sent, failed });
+  res.json({ sent, failed, pruned: staleEndpoints.length });
 });
 
 function slim(doc) {

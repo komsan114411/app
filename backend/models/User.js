@@ -32,6 +32,7 @@ const UserSchema = new mongoose.Schema({
   // 2FA (TOTP)
   totpSecret:       { type: String, default: '', select: false },
   totpEnabled:      { type: Boolean, default: false },
+  totpPendingAt:    { type: Date,   default: null, select: false },   // set by /totp/setup; /totp/enable rejects if older than 15 min
   totpBackupCodes:  { type: [String], default: [], select: false },
 
   failedLoginCount: { type: Number, default: 0, select: false },

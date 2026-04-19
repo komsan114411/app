@@ -70,11 +70,28 @@ authRouter.post('/login', loginBurstLimiter, loginLimiter, verifyCaptcha, valida
     let totpOk = false;
     if (totpCode) totpOk = verifyTotp(user.totpSecret, totpCode);
     if (!totpOk && backupCode) {
-      const h = hashBackupCode(backupCode);
-      if (user.totpBackupCodes.includes(h)) {
-        totpOk = true;
-        // consume the code (single-use)
-        await User.updateOne({ _id: user._id }, { $pull: { totpBackupCodes: h } });
+      // Constant-time backup-code check. Array.prototype.includes stops at
+      // the first match — so timing leaks which stored hash matches earliest.
+      // We scan every code unconditionally with timingSafeEqual and accumulate
+      // any match in a single bit.
+      const candidateHex = hashBackupCode(backupCode);
+      const candidate = Buffer.from(candidateHex, 'hex');
+      let matched = 0;
+      for (const stored of (user.totpBackupCodes || [])) {
+        let storedBuf;
+        try { storedBuf = Buffer.from(String(stored), 'hex'); } catch { storedBuf = null; }
+        if (!storedBuf || storedBuf.length !== candidate.length) continue;
+        if (crypto.timingSafeEqual(storedBuf, candidate)) matched = 1;
+      }
+      if (matched) {
+        // Atomic single-use: only succeed if the code was still present at
+        // consume time. Two concurrent logins with the same backup code can
+        // race here — exactly one sees modifiedCount=1, the other is rejected.
+        const consume = await User.updateOne(
+          { _id: user._id, totpBackupCodes: candidateHex },
+          { $pull: { totpBackupCodes: candidateHex } },
+        );
+        if (consume.modifiedCount > 0) totpOk = true;
       }
     }
     if (!totpOk) {

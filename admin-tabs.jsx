@@ -162,7 +162,10 @@ function friendlyPasswordError(code) {
     case 'invalid_credentials': return 'รหัสผ่านปัจจุบันไม่ถูกต้อง';
     case 'weak':                return 'รหัสผ่านไม่แข็งแรงพอ — เพิ่มความหลากหลาย';
     case 'too_short':           return 'รหัสผ่านสั้นเกินไป';
+    case 'too_long':            return 'รหัสผ่านยาวเกินไป';
+    case 'bad_chars':           return 'มีอักขระควบคุมไม่ถูกต้อง';
     case 'breached':            return 'รหัสนี้อยู่ในฐานรั่วไหล — เลือกรหัสอื่น';
+    case 'hibp_unavailable':    return 'ตรวจสอบฐานข้อมูลรหัสรั่วไหลไม่ได้ ลองใหม่ภายหลัง';
     case 'rate_limited':        return 'พยายามบ่อยเกินไป รอสักครู่';
     default:                    return 'ไม่สามารถเปลี่ยนรหัสผ่านได้';
   }

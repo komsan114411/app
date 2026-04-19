@@ -163,12 +163,21 @@ app.use('/api/auth',      authRouter);
 app.use('/api/admin',     adminRouter);
 
 // ── Uploaded files — banner images etc. served as public (no auth) ─────
-app.use('/uploads', express.static(UPLOAD_ROOT, {
+// Defence in depth: even though upload.js only accepts raster images, we
+// still tell the browser never to sniff these responses or run anything
+// embedded in them, and we isolate them from same-origin pages.
+app.use('/uploads', (req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Content-Security-Policy', "default-src 'none'; img-src 'self'; sandbox");
+  res.setHeader('Cross-Origin-Resource-Policy', 'same-site');
+  next();
+}, express.static(UPLOAD_ROOT, {
   dotfiles: 'deny',
   maxAge: '30d',
   etag: false,
   immutable: true,
   fallthrough: true,
+  index: false,
 }));
 
 // ── Static frontend — served from project root (index.html + jsx + icons) ──

@@ -2,6 +2,8 @@
 
 import crypto from 'node:crypto';
 import zxcvbn from 'zxcvbn';
+import { env } from '../config/env.js';
+import { log } from './logger.js';
 
 const MIN_LENGTH = 12;   // stricter than schema (10) for new passwords
 const MAX_LENGTH = 200;
@@ -52,6 +54,14 @@ export async function validatePasswordStrength(password, userInputs = []) {
 
   const leaked = await hibpCount(password);
   if (leaked > 0) return { ok: false, reason: 'breached', leaked };
+  // Fail-closed in production: if HIBP was unreachable (-1) we cannot confirm
+  // the password is not in a known breach dump. Rejecting is safer than
+  // silently accepting a potentially compromised password. Dev/test still
+  // allow through to keep local iteration friction-free.
+  if (leaked === -1 && env.NODE_ENV === 'production') {
+    log.warn('HIBP check unavailable — rejecting password set in production');
+    return { ok: false, reason: 'hibp_unavailable' };
+  }
 
   return { ok: true };
 }

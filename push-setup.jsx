@@ -118,18 +118,30 @@ function PushBroadcastCard() {
   const send = async (e) => {
     e.preventDefault();
     if (!title.trim()) { toast.error('ต้องใส่หัวข้อ'); return; }
+    const rawUrl = url.trim();
+    // Client-side URL sanity: must be '/', absolute path, or a scheme-allowed URL.
+    // Server re-validates with safeUrl() — this is just early UX.
+    if (rawUrl && rawUrl !== '/' && !/^\//.test(rawUrl)
+        && typeof safeUrl === 'function' && !safeUrl(rawUrl)) {
+      toast.error('ลิงก์ไม่ปลอดภัย — รองรับเฉพาะ /path หรือ https://');
+      return;
+    }
     const ok = await toast.confirm(`ส่งแจ้งเตือน "${title}" ถึง subscribers ทั้งหมด?`, 'ส่ง', 'ยกเลิก');
     if (!ok) return;
     setBusy(true); setResult(null);
     try {
-      const r = await api.broadcastPush({ title: title.trim().slice(0, 80), body: body.trim().slice(0, 200), url: url.trim().slice(0, 2048) || '/' });
-      setResult({ sent: r.sent || 0, failed: r.failed || 0 });
+      const r = await api.broadcastPush({ title: title.trim().slice(0, 80), body: body.trim().slice(0, 200), url: rawUrl.slice(0, 2048) || '/' });
+      setResult({ sent: r.sent || 0, failed: r.failed || 0, pruned: r.pruned || 0 });
       toast.success(`ส่งสำเร็จ ${r.sent} · ล้มเหลว ${r.failed}`);
       setTitle(''); setBody('');
     } catch (e) {
       if (e.message === 'push_disabled') {
         toast.error('Web Push ยังไม่ได้ตั้งค่า (ขาด VAPID keys)');
         setAvailable(false);
+      } else if (e.message === 'invalid_url') {
+        toast.error('ลิงก์ไม่ปลอดภัย — server ปฏิเสธ');
+      } else if (e.message === 'forbidden') {
+        toast.error('ต้องเป็น admin (role) เท่านั้น');
       } else {
         toast.error('ส่งไม่สำเร็จ: ' + (e.message || 'unknown'));
       }
@@ -177,6 +189,7 @@ function PushBroadcastCard() {
         {result && (
           <div style={{ marginTop: 10, padding: '8px 12px', borderRadius: 8, background: 'rgba(6,199,85,0.08)', color: '#058850', fontSize: 12 }}>
             ส่งสำเร็จ {result.sent} · ล้มเหลว {result.failed}
+            {result.pruned > 0 && <span style={{ marginLeft: 8, opacity: 0.8 }}>· ลบ endpoint ตาย {result.pruned}</span>}
           </div>
         )}
       </form>
