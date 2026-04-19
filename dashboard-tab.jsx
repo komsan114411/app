@@ -4,6 +4,7 @@ function DashboardTab({ me, state }) {
   const [stats, setStats] = React.useState(null);
   const [series, setSeries] = React.useState(null);
   const [error, setError] = React.useState(null);
+  const [diag, setDiag] = React.useState(null);  // API-ping diagnostic result
 
   const load = React.useCallback(async () => {
     setError(null);
@@ -22,6 +23,26 @@ function DashboardTab({ me, state }) {
     return () => clearInterval(id);
   }, [load]);
 
+  // End-to-end ping: exercises every critical path (read, admin auth,
+  // CSRF token, cookie round-trip) so the admin can diagnose clicks that
+  // "silently do nothing". Reports pass/fail per test.
+  const runDiagnostic = async () => {
+    setDiag({ running: true });
+    const results = [];
+    const test = async (name, fn) => {
+      const t0 = Date.now();
+      try { const r = await fn(); results.push({ name, ok: true, ms: Date.now() - t0, detail: r }); }
+      catch (e) { results.push({ name, ok: false, ms: Date.now() - t0, detail: e.message || String(e) }); }
+    };
+    await test('GET /api/config (public)',        () => api.getConfig());
+    await test('GET /api/admin/me (auth)',        () => api.me());
+    await test('GET /api/admin/stats',            () => api.getStats());
+    await test('GET /api/admin/users',            () => api.listUsers({ limit: 1 }));
+    await test('GET /api/admin/me/sessions',      () => api.call('/api/admin/me/sessions', { auth: true }));
+    await test('GET /api/admin/health/features',  () => api.call('/api/admin/health/features', { auth: true }));
+    setDiag({ running: false, results, at: new Date() });
+  };
+
   const chartData = buildChart(series, 7);
 
   return (
@@ -36,6 +57,36 @@ function DashboardTab({ me, state }) {
       )}
 
       {typeof SystemStatusBanner === 'function' && <SystemStatusBanner/>}
+
+      <Card style={{ marginBottom: 14 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+          <div style={{ fontSize: 13, fontWeight: 700, flex: 1, minWidth: 160 }}>🩺 ทดสอบการเชื่อมต่อ</div>
+          <button onClick={runDiagnostic} disabled={diag?.running} style={{
+            padding: '7px 14px', borderRadius: 8, border: '1px solid rgba(0,0,0,0.12)',
+            background: '#fff', fontFamily: 'inherit', fontSize: 12, cursor: diag?.running ? 'wait' : 'pointer',
+          }}>{diag?.running ? 'กำลังทดสอบ…' : 'รันทดสอบ'}</button>
+        </div>
+        {diag?.results && (
+          <div style={{ marginTop: 10, fontSize: 11, fontFamily: 'ui-monospace, monospace' }}>
+            {diag.results.map((r, i) => (
+              <div key={i} style={{
+                display: 'flex', gap: 8, alignItems: 'center',
+                padding: '4px 8px', borderRadius: 6,
+                background: r.ok ? 'rgba(6,199,85,0.06)' : 'rgba(180,70,58,0.06)',
+                color: r.ok ? '#058850' : '#B4463A', marginBottom: 3,
+              }}>
+                <span>{r.ok ? '✓' : '✗'}</span>
+                <span style={{ flex: 1 }}>{r.name}</span>
+                <span style={{ opacity: 0.7 }}>{r.ms}ms</span>
+                {!r.ok && <span style={{ opacity: 0.85, maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>· {r.detail}</span>}
+              </div>
+            ))}
+            <div style={{ marginTop: 4, fontSize: 10, color: '#8F877C' }}>
+              ถ้าทุกบรรทัดเป็น ✓ สีเขียว แต่ปุ่มในหน้ายังกดไม่ได้ — อาจเป็น browser ปิด window.confirm. ปุ่มล่าสุดใช้ "✓ ยืนยัน?" pattern ไม่ต้องพึ่ง confirm dialog
+            </div>
+          </div>
+        )}
+      </Card>
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 16 }}>
         <StatCard icon="heart" label="ผู้ดูแล (ใช้งาน)" main={stats?.users?.active ?? '—'} sub={`จากทั้งหมด ${stats?.users?.total ?? '—'}`}/>

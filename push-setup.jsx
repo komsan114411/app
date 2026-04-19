@@ -115,6 +115,10 @@ function PushBroadcastCard() {
     })();
   }, []);
 
+  const [armed, setArmed] = React.useState(false);
+  const armedTimer = React.useRef(null);
+  React.useEffect(() => () => clearTimeout(armedTimer.current), []);
+
   const send = async (e) => {
     e.preventDefault();
     if (!title.trim()) { toast.error('ต้องใส่หัวข้อ'); return; }
@@ -126,8 +130,15 @@ function PushBroadcastCard() {
       toast.error('ลิงก์ไม่ปลอดภัย — รองรับเฉพาะ /path หรือ https://');
       return;
     }
-    const ok = await toast.confirm(`ส่งแจ้งเตือน "${title}" ถึง subscribers ทั้งหมด?`, 'ส่ง', 'ยกเลิก');
-    if (!ok) return;
+    // Arm-to-confirm: first click arms button, second click within 3s fires.
+    if (!armed) {
+      setArmed(true);
+      clearTimeout(armedTimer.current);
+      armedTimer.current = setTimeout(() => setArmed(false), 3000);
+      return;
+    }
+    setArmed(false);
+    clearTimeout(armedTimer.current);
     setBusy(true); setResult(null);
     try {
       const r = await api.broadcastPush({ title: title.trim().slice(0, 80), body: body.trim().slice(0, 200), url: rawUrl.slice(0, 2048) || '/' });
@@ -182,10 +193,11 @@ function PushBroadcastCard() {
         </Field>
         <button type="submit" disabled={busy || !title.trim()} style={{
           padding: '9px 18px', borderRadius: 9, border: 'none',
-          background: (busy || !title.trim()) ? '#8F877C' : '#1F1B17', color: '#fff',
+          background: (busy || !title.trim()) ? '#8F877C' : (armed ? '#B4463A' : '#1F1B17'),
+          color: '#fff',
           fontFamily: 'inherit', fontSize: 13, fontWeight: 600,
           cursor: (busy || !title.trim()) ? 'not-allowed' : 'pointer',
-        }}>{busy ? 'กำลังส่ง…' : 'ส่งถึง Subscribers ทั้งหมด'}</button>
+        }}>{busy ? 'กำลังส่ง…' : armed ? '✓ ยืนยันส่ง broadcast?' : 'ส่งถึง Subscribers ทั้งหมด'}</button>
         {result && (
           <div style={{ marginTop: 10, padding: '8px 12px', borderRadius: 8, background: 'rgba(6,199,85,0.08)', color: '#058850', fontSize: 12 }}>
             ส่งสำเร็จ {result.sent} · ล้มเหลว {result.failed}

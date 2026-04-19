@@ -44,11 +44,13 @@ function SecurityTab({ onLogout, mustChange = false, onPasswordChanged, me, onMe
     if (next !== confirm) { setMsg({ kind: 'error', text: 'รหัสใหม่ไม่ตรงกัน' }); return; }
     if (next.length < 12) { setMsg({ kind: 'error', text: 'ต้องยาวอย่างน้อย 12 ตัว' }); return; }
     setBusy(true);
+    let succeeded = false;
     try {
       // First-time setup: server accepts blank currentPassword when the
       // account still has mustChangePassword=true. Skip the field entirely
       // so we don't have to force the user to retype their default.
       await api.changePassword(mustChange ? '' : current, next);
+      succeeded = true;
       if (mustChange) {
         setMsg({ kind: 'success', text: 'ตั้งรหัสใหม่สำเร็จ — กรุณาเข้าสู่ระบบอีกครั้ง' });
         setTimeout(() => onLogout?.(), 1400);
@@ -63,9 +65,11 @@ function SecurityTab({ onLogout, mustChange = false, onPasswordChanged, me, onMe
         setPwSuggestions(err.responseBody.suggestions);
       }
     } finally {
+      // Always clear the new-password fields (sensitive, no reason to keep).
+      // Keep `current` on failure so admin can retry the policy check without
+      // retyping; clear it on success (user is about to be logged out anyway).
       setNext(''); setConfirm('');
-      // Don't clear current — admin may want to retry with the same current pw
-      if (msg?.kind !== 'success') { /* keep current */ } else { setCurrent(''); }
+      if (succeeded) setCurrent('');
       setBusy(false);
     }
   };
