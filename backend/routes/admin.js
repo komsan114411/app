@@ -286,6 +286,61 @@ adminRouter.patch('/config', adminWriteLimiter, requireRole('admin', 'editor'), 
   res.json({ ok: true, updatedAt: cfg.updatedAt });
 });
 
+// ── Direct downloadLinks setter ─────────────────────────────
+// Admin clients whose browsers cached an OLD security.jsx (pre-apk regex)
+// silently strip /media/*.apk URLs via SafeState.sanitize before a regular
+// PATCH /config request leaves the browser. This endpoint bypasses that by
+// accepting a raw patch and sanitizing ONLY server-side (which has the
+// correct regex). Also used by the ApkUploader as a "write-through" path
+// so uploaded URLs can't be clobbered by the polling loop racing the
+// debounced save.
+const downloadLinksBody = z.object({
+  android:      z.string().max(2048).optional().or(z.literal('')),
+  ios:          z.string().max(2048).optional().or(z.literal('')),
+  androidLabel: z.string().max(40).optional().or(z.literal('')),
+  iosLabel:     z.string().max(40).optional().or(z.literal('')),
+  note:         z.string().max(140).optional().or(z.literal('')),
+}).strict();
+
+adminRouter.post('/config/download-links', adminWriteLimiter, requireRole('admin', 'editor'), async (req, res) => {
+  const p = downloadLinksBody.safeParse(req.body);
+  if (!p.success) return res.status(400).json({ error: 'invalid_input' });
+
+  // Validate URLs with the server-side safeUrl (which accepts /media/*.apk)
+  const clean = {};
+  for (const k of ['android', 'ios']) {
+    if (p.data[k] !== undefined) {
+      const s = safeUrl(p.data[k]);
+      // Allow blanking via explicit empty string
+      if (p.data[k] === '' || s) clean[k] = s;
+      else return res.status(400).json({ error: 'invalid_url', field: k });
+    }
+  }
+  for (const k of ['androidLabel', 'iosLabel', 'note']) {
+    if (p.data[k] !== undefined) clean[k] = safeText(p.data[k], k === 'note' ? 140 : 40);
+  }
+
+  const cfg = await getAppConfig();
+  const before = { ...(cfg.downloadLinks?.toObject?.() || cfg.downloadLinks || {}) };
+  cfg.downloadLinks = { ...before, ...clean };
+  cfg.updatedBy = req.user.id;
+  try { await cfg.save(); }
+  catch (e) {
+    if (e && e.name === 'VersionError') return res.status(409).json({ error: 'stale_version' });
+    throw e;
+  }
+  invalidateConfigCache();
+
+  await AuditLog.create({
+    actorId: req.user.id, actorEmail: req.user.loginId,
+    action: 'download_links_set',
+    target: 'AppConfig:downloadLinks',
+    ipHash: hashIp(req.ip), userAgent: safeText(req.get('user-agent') || '', 200),
+    diff: { before, after: cfg.downloadLinks?.toObject?.() || cfg.downloadLinks },
+  });
+  res.json({ ok: true, downloadLinks: cfg.downloadLinks });
+});
+
 // ── Upload banner image (multipart) ─────────────────────────
 // Buffers the file in memory via multer, then stores the bytes in the
 // MediaAsset collection. Serving happens at GET /media/:id (server.js).

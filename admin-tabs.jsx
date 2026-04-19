@@ -815,6 +815,12 @@ function DownloadLinksEditor({ state, setState }) {
         sub="วาง URL ไปยัง APK / Play Store / App Store · หน้าผู้ใช้จะเห็นปุ่มดาวน์โหลดอัตโนมัติ"
       />
 
+      {/* Rescue: write URL directly, bypass frontend sanitize + polling race */}
+      <DirectUrlSetter dl={dl} onSet={() => {
+        // Nudge local state by requesting fresh config on next tick
+        setTimeout(() => { try { api.getConfig?.(); } catch {} }, 100);
+      }}/>
+
       {/* Source #1: direct APK upload — self-hosted, no external service */}
       <ApkUploader currentUrl={dl.android} onUploaded={(url, filename) => {
         patch({ android: url, androidLabel: dl.androidLabel || ('ดาวน์โหลด ' + filename) });
@@ -923,6 +929,21 @@ function ApkUploader({ currentUrl, onUploaded }) {
     setError(null); setBusy(true);
     try {
       const r = await api.uploadApk(file);
+      // Write the new URL server-side FIRST via the bypass endpoint.
+      // This skips SafeState.sanitize on any cached browser that might
+      // still strip /media/*.apk, and prevents the polling loop from
+      // clobbering the change between the state update and the
+      // debounced save.
+      try {
+        await api.setDownloadLinks({
+          android: r.url,
+          androidLabel: 'ดาวน์โหลด ' + (r.filename || 'APK'),
+        });
+        if (typeof toast !== 'undefined') toast.success('อัปโหลดและตั้งลิงก์สำเร็จ');
+      } catch (persistErr) {
+        if (typeof toast !== 'undefined') toast.error('อัปโหลด OK แต่เซ็ตลิงก์ล้มเหลว: ' + (persistErr.message || ''));
+      }
+      // Still notify parent so local state matches the server snapshot.
       onUploaded?.(r.url, r.filename);
       await load();
     } catch (e) {
@@ -1032,8 +1053,129 @@ function ApkUploader({ currentUrl, onUploaded }) {
 }
 
 // InstallLinkShareCard moved to install-share.jsx (token-rotating variant).
+// ─── DirectUrlSetter ──────────────────────────────────────────
+// Writes the downloadLinks patch directly via the server-side bypass
+// endpoint. Used as a rescue when a browser still has stale JSX cached
+// (pre-apk-regex) that silently strips /media/*.apk URLs before they
+// reach the normal PATCH /config flow. Also useful when the admin
+// wants to paste an external GitHub/Drive URL without worrying about
+// the polling loop racing the local save.
+function DirectUrlSetter({ dl, onSet }) {
+  const [url, setUrl] = React.useState(dl?.android || '');
+  const [busy, setBusy] = React.useState(false);
+  const [msg, setMsg] = React.useState(null);
+
+  const presets = [
+    {
+      label: 'GitHub Release (latest APK)',
+      url: 'https://github.com/komsan114411/app/releases/download/latest-apk/app-debug.apk',
+    },
+  ];
+
+  const save = async () => {
+    const trimmed = (url || '').trim();
+    if (!trimmed) { setMsg({ kind: 'error', text: 'ใส่ URL ก่อน' }); return; }
+    setMsg(null); setBusy(true);
+    try {
+      const r = await api.setDownloadLinks({
+        android: trimmed,
+        androidLabel: dl?.androidLabel || 'ดาวน์โหลด APK',
+      });
+      if (!r?.downloadLinks?.android) {
+        setMsg({ kind: 'error', text: 'Server ปฏิเสธ URL — รองรับเฉพาะ https://, /media/*.apk' });
+      } else {
+        setMsg({ kind: 'success', text: 'บันทึก URL แล้ว · install page ใช้งานได้ทันที' });
+        onSet?.();
+      }
+    } catch (e) {
+      setMsg({ kind: 'error', text: 'บันทึกไม่สำเร็จ: ' + (e.message || 'unknown') });
+    } finally { setBusy(false); }
+  };
+
+  const clear = async () => {
+    setBusy(true);
+    try {
+      await api.setDownloadLinks({ android: '' });
+      setUrl('');
+      setMsg({ kind: 'success', text: 'ล้าง URL Android แล้ว' });
+      onSet?.();
+    } catch (e) { setMsg({ kind: 'error', text: 'ล้างไม่สำเร็จ' }); }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <Card style={{ marginBottom: 14, border: '2px solid rgba(210,150,40,0.35)', background: 'linear-gradient(135deg, #FFF8ED, #FCECD0)' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10, flexWrap: 'wrap' }}>
+        <div style={{ fontSize: 18 }}>🔧</div>
+        <div style={{ flex: 1, minWidth: 180 }}>
+          <div style={{ fontSize: 14, fontWeight: 700 }}>เซ็ต URL โดยตรง (Rescue)</div>
+          <div style={{ fontSize: 11, color: '#6B6458', marginTop: 2, lineHeight: 1.5 }}>
+            ข้าม state frontend · server จัดการ validation ทั้งหมด · ใช้เมื่อเบราว์เซอร์มี cache เก่าแล้วอัปโหลดไม่ผ่าน
+          </div>
+        </div>
+      </div>
+
+      <div style={{ fontSize: 11, fontWeight: 600, color: '#6B6458', marginBottom: 6 }}>URL ปัจจุบัน:</div>
+      <code style={{
+        display: 'block', padding: '8px 12px', borderRadius: 8,
+        background: '#fff', border: '1px solid rgba(0,0,0,0.06)',
+        fontSize: 12, fontFamily: 'ui-monospace, monospace',
+        color: dl?.android ? '#058850' : '#8F877C',
+        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+        marginBottom: 10,
+      }}>{dl?.android || '(empty — no download button on install page)'}</code>
+
+      <div style={{ fontSize: 11, fontWeight: 600, color: '#6B6458', marginBottom: 6 }}>เซ็ตใหม่:</div>
+      <input type="text" value={url} onChange={e => setUrl(e.target.value.slice(0, 2048))}
+        placeholder="https://github.com/owner/repo/releases/download/latest-apk/app-debug.apk"
+        style={{
+          width: '100%', padding: '9px 12px', borderRadius: 9,
+          border: '1px solid rgba(0,0,0,0.12)', background: '#fff',
+          fontFamily: 'ui-monospace, monospace', fontSize: 12, color: '#1F1B17',
+          boxSizing: 'border-box', outline: 'none', marginBottom: 8,
+        }}/>
+
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 8 }}>
+        {presets.map((p, i) => (
+          <button key={i} onClick={() => setUrl(p.url)} style={{
+            padding: '6px 10px', borderRadius: 7, border: '1px solid rgba(0,0,0,0.12)',
+            background: '#fff', fontSize: 11, cursor: 'pointer', fontFamily: 'inherit',
+          }}>📌 {p.label}</button>
+        ))}
+      </div>
+
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+        <button onClick={save} disabled={busy || !url.trim()} style={{
+          padding: '9px 18px', borderRadius: 9, border: 'none',
+          background: (busy || !url.trim()) ? '#8F877C' : '#058850', color: '#fff',
+          fontFamily: 'inherit', fontSize: 13, fontWeight: 600,
+          cursor: (busy || !url.trim()) ? 'not-allowed' : 'pointer',
+        }}>{busy ? 'กำลังบันทึก…' : '💾 เซ็ต URL'}</button>
+        {dl?.android && (
+          <button onClick={clear} disabled={busy} style={{
+            padding: '9px 14px', borderRadius: 9,
+            border: '1px solid rgba(180,70,58,0.3)',
+            background: '#fff', color: '#B4463A',
+            fontFamily: 'inherit', fontSize: 13, cursor: busy ? 'wait' : 'pointer',
+          }}>🗑 ล้าง</button>
+        )}
+      </div>
+
+      {msg && (
+        <div style={{
+          marginTop: 10, padding: '8px 12px', borderRadius: 8,
+          background: msg.kind === 'success' ? 'rgba(6,199,85,0.1)' : 'rgba(180,70,58,0.08)',
+          color: msg.kind === 'success' ? '#058850' : '#B4463A',
+          fontSize: 12,
+        }}>{msg.text}</div>
+      )}
+    </Card>
+  );
+}
+
 window.DownloadLinksEditor = DownloadLinksEditor;
 window.ApkUploader = ApkUploader;
+window.DirectUrlSetter = DirectUrlSetter;
 
 function friendlyCreateError(code) {
   switch (code) {

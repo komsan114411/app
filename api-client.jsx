@@ -117,6 +117,12 @@ const api = {
     const fd = new FormData(); fd.append('file', file);
     return request('/api/admin/upload/apk', { method: 'POST', body: fd, auth: true });
   },
+  async setDownloadLinks(patch) {
+    // Bypasses the main PATCH /config flow and its client-side sanitize —
+    // use this when the URL must reach the server verbatim (e.g. after an
+    // APK upload on a browser that may have a stale security.jsx cached).
+    return request('/api/admin/config/download-links', { method: 'POST', body: patch, auth: true });
+  },
   async listApks()            { return request('/api/admin/uploads/apks', { auth: true }); },
   async deleteApk(id)         { return request(`/api/admin/uploads/apks/${encodeURIComponent(id)}`, { method: 'DELETE', auth: true }); },
   async getInstallToken()     { return request('/api/admin/install-token', { auth: true }); },

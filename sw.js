@@ -1,6 +1,6 @@
 // sw.js — Service worker: offline shell + stale-while-revalidate + web push.
 
-const VERSION = 'v11';
+const VERSION = 'v12';
 const SHELL = 'shell-' + VERSION;
 
 const SHELL_FILES = [
@@ -50,15 +50,43 @@ self.addEventListener('activate', (event) => {
   self.clients.claim();
 });
 
+// Fetch strategy:
+//   • /api/*, /uploads/*, /media/*  → no SW involvement (pass through)
+//   • index.html + *.jsx             → NETWORK FIRST (critical: we were
+//       serving stale JSX that had an older safeUrl() regex, which
+//       silently stripped /media/*.apk URLs before they reached the
+//       server. Cache-first kept the bug frozen across deploys.)
+//   • css / png / svg / fonts        → cache-first (safe to be stale)
 self.addEventListener('fetch', (event) => {
   const req = event.request;
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
   if (url.pathname.startsWith('/api/')) return;
   if (url.pathname.startsWith('/uploads/')) return;
+  if (url.pathname.startsWith('/media/')) return;
   if (url.origin !== self.location.origin) return;
+
+  const isCritical = /\.(jsx|html)$/.test(url.pathname)
+                  || url.pathname === '/'
+                  || url.pathname === '/install'
+                  || url.pathname.startsWith('/install/')
+                  || url.pathname.startsWith('/admin/');
+
   event.respondWith((async () => {
     const cache = await caches.open(SHELL);
+    if (isCritical) {
+      // Network-first: always fetch latest, fall back to cache only offline
+      try {
+        const res = await fetch(req);
+        if (res.ok) cache.put(req, res.clone()).catch(() => {});
+        return res;
+      } catch {
+        const cached = await cache.match(req);
+        if (cached) return cached;
+        throw new Error('offline');
+      }
+    }
+    // Stale-while-revalidate for static assets
     const cached = await cache.match(req);
     const networkPromise = fetch(req).then(res => {
       if (res.ok) cache.put(req, res.clone()).catch(() => {});
