@@ -28,6 +28,12 @@ const schema = z.object({
 
   ADMIN_LOGIN_ID:  z.string().min(3).max(64).optional(),
   ADMIN_PASSWORD:  z.string().min(1).max(200).optional(),
+  // Break-glass admin recovery: when set to "true" or "1", the boot seed
+  // flow will OVERWRITE the admin's password (identified by ADMIN_LOGIN_ID)
+  // with ADMIN_PASSWORD on the next start, bypassing zxcvbn/HIBP checks.
+  // The admin MUST remove this flag after use or every restart will reset
+  // the password. See server.js ensureBootstrapped().
+  ADMIN_FORCE_RESET: z.string().optional().default('').transform(v => v === 'true' || v === '1'),
 
   // ── Email (password reset) ─────────────────────────────
   SMTP_HOST:       z.string().optional(),

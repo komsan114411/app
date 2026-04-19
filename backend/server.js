@@ -317,7 +317,53 @@ export { app };
 // reset on first login.
 async function ensureBootstrapped() {
   try { await getAppConfig(); } catch (e) { log.error({ err: e.message }, 'bootstrap_config_failed'); }
+
   try {
+    // ── Break-glass: forced admin password reset via env vars ──────────
+    // When the operator sets ADMIN_FORCE_RESET=true together with
+    // ADMIN_LOGIN_ID + ADMIN_PASSWORD, the matching account's password is
+    // replaced using setPasswordUnsafe() — zxcvbn / HIBP / length rules
+    // are ALL skipped, so even a single character works. This is the
+    // recovery path when SMTP isn't configured and the admin lost their
+    // password. Existing sessions are revoked so the old credentials die.
+    // The account's `mustChangePassword` flag is cleared so the operator
+    // can log in with their chosen password without hitting the strength
+    // enforcement on the next screen.
+    if (env.ADMIN_FORCE_RESET) {
+      if (!env.ADMIN_LOGIN_ID || !env.ADMIN_PASSWORD) {
+        log.error('ADMIN_FORCE_RESET=true but ADMIN_LOGIN_ID or ADMIN_PASSWORD missing — skipping');
+      } else {
+        const loginId = env.ADMIN_LOGIN_ID.toLowerCase();
+        let u = await User.findOne({ loginId }).select('+passwordHash');
+        if (!u) {
+          u = new User({ loginId, role: 'admin' });
+          log.warn({ loginId }, '🔐 ADMIN_FORCE_RESET: creating admin account because loginId not found');
+        }
+        await u.setPasswordUnsafe(env.ADMIN_PASSWORD);
+        u.role = 'admin';
+        u.disabledAt = null;
+        u.disabledBy = null;
+        u.mustChangePassword = false;
+        u.failedLoginCount = 0;
+        u.lockUntil = null;
+        u.tokenVersion = (u.tokenVersion || 0) + 1;       // invalidate any issued JWTs
+        await u.save();
+        // Best effort: drop existing refresh tokens too so stolen sessions die.
+        try {
+          const { RefreshToken } = await import('./models/RefreshToken.js');
+          await RefreshToken.updateMany(
+            { userId: u._id, revokedAt: null },
+            { $set: { revokedAt: new Date(), revokeReason: 'admin_force_reset' } },
+          );
+        } catch {}
+        log.warn({ loginId },
+          '🔐 ADMIN_FORCE_RESET=true — password replaced, all sessions revoked. ' +
+          'REMOVE the env var now, otherwise every restart resets the password again.');
+        return;
+      }
+    }
+
+    // ── Normal first-boot auto-seed ────────────────────────────────────
     const adminCount = await User.countDocuments({ role: 'admin' });
     if (adminCount > 0) return;
     const loginId = (env.ADMIN_LOGIN_ID || 'admin123').toLowerCase();
