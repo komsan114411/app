@@ -14,7 +14,7 @@ import { loginLimiter, loginBurstLimiter, forgotLimiter } from '../middleware/ra
 import { enforceIpGuard, recordIpFailure, clearIpFailures } from '../middleware/ipGuard.js';
 import { verifyCaptcha } from '../middleware/captcha.js';
 import { validate, loginBody } from '../middleware/validate.js';
-import { rotateCsrfCookie } from '../middleware/csrf.js';
+import { rotateCsrfCookie, clearCsrfCookie } from '../middleware/csrf.js';
 import { hashIp, safeText } from '../utils/sanitize.js';
 import { sendMail } from '../utils/email.js';
 import { env } from '../config/env.js';
@@ -166,6 +166,9 @@ authRouter.post('/logout', async (req, res) => {
   const raw = req.cookies && req.cookies[REFRESH_COOKIE];
   if (raw) await revokeRefresh(raw);
   res.clearCookie(REFRESH_COOKIE, { path: '/api/auth', domain: env.COOKIE_DOMAIN || undefined });
+  // Also drop the CSRF cookie so no stale double-submit token lingers
+  // in the browser after the session it was bound to is gone.
+  clearCsrfCookie(res);
   res.status(204).end();
 });
 

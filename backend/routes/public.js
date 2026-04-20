@@ -62,6 +62,12 @@ let cache = { at: 0, payload: null, version: 0, origin: '' };
 publicRouter.get('/config', publicReadLimiter, async (req, res) => {
   const now = Date.now();
   const origin = publicOriginOf(req);
+  // Emit Vary so any shared cache (CDN / reverse proxy / Service Worker)
+  // segregates cached payloads by the same signals we key the in-process
+  // cache on. Without this, a request from https://attacker.example with
+  // a spoofed X-Forwarded-Host could poison the cached config served to
+  // the legitimate origin.
+  res.set('Vary', 'Origin, Host, X-Forwarded-Host, X-Forwarded-Proto');
   // Cache is keyed on origin too: a request from https://localhost
   // and one from the web domain must not share a materialized payload.
   if (cache.payload && cache.origin === origin && now - cache.at < 3_000) {
@@ -174,9 +180,35 @@ publicRouter.get('/push/vapid-key', (req, res) => {
   res.json({ publicKey: env.PUSH_VAPID_PUBLIC });
 });
 
+// Allow-list of known Web Push service hosts. An attacker who POSTs a
+// subscription with endpoint=http://169.254.169.254/... or an internal
+// URL would otherwise turn `admin → /push/broadcast` into a blind SSRF
+// (the web-push lib POSTs to whatever endpoint we stored). Restricting
+// at subscribe time is the right place — broadcast is server-trusted.
+// Subdomains of the base domains below are allowed; everything else
+// is rejected. Public Web Push spec: only these services exist.
+const PUSH_HOST_ALLOWLIST = [
+  'fcm.googleapis.com',                 // Chrome / Chromium (Android + desktop)
+  'updates.push.services.mozilla.com',  // Firefox
+  'notify.windows.com',                 // Edge (matches *.notify.windows.com)
+  'push.apple.com',                     // Safari 16+ (matches *.push.apple.com)
+];
+
+function isAllowedPushEndpoint(raw) {
+  if (typeof raw !== 'string' || raw.length > 1024) return false;
+  let u;
+  try { u = new URL(raw); } catch { return false; }
+  if (u.protocol !== 'https:') return false;
+  const host = u.hostname.toLowerCase();
+  for (const base of PUSH_HOST_ALLOWLIST) {
+    if (host === base || host.endsWith('.' + base)) return true;
+  }
+  return false;
+}
+
 publicRouter.post('/push/subscribe', publicReadLimiter, async (req, res) => {
   const { endpoint, keys } = req.body || {};
-  if (!endpoint || typeof endpoint !== 'string' || endpoint.length > 1024) return res.status(400).json({ error: 'invalid' });
+  if (!isAllowedPushEndpoint(endpoint)) return res.status(400).json({ error: 'invalid_endpoint' });
   if (!keys || typeof keys !== 'object' || !keys.p256dh || !keys.auth) return res.status(400).json({ error: 'invalid' });
   try {
     await PushSubscription.updateOne(

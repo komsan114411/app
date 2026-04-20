@@ -18,6 +18,13 @@ import { log } from '../utils/logger.js';
 // Top-level await: set up the shared Redis client once, synchronously
 // from the caller's POV. If REDIS_URL isn't set or the connection fails,
 // every limiter transparently uses the in-process MemoryStore.
+//
+// Production hardening: if REDIS_URL is explicitly configured but we
+// can't load/construct the Redis client, refuse to boot. Silently
+// degrading to memory-store in prod means a multi-instance deploy
+// quietly loses its shared rate-limit bucket — an attacker can then
+// spread brute-force attempts across instances to bypass limits.
+// Memory fallback is only acceptable in dev (NODE_ENV !== 'production').
 let redisClient = null;
 let RedisStoreCls = null;
 if (env.REDIS_URL) {
@@ -28,6 +35,10 @@ if (env.REDIS_URL) {
     const mod = await import('rate-limit-redis');
     RedisStoreCls = mod.default || mod.RedisStore;
   } catch (e) {
+    if (env.NODE_ENV === 'production') {
+      log.fatal({ err: e.message }, 'redis_rate_limit_unavailable_refusing_to_boot');
+      throw new Error('REDIS_URL set but Redis unavailable — refusing silent fallback in production');
+    }
     log.warn({ err: e.message }, 'redis_rate_limit_unavailable_fallback_memory');
     redisClient = null;
     RedisStoreCls = null;

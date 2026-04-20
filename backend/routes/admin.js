@@ -1116,6 +1116,38 @@ adminRouter.post('/push/broadcast', adminWriteLimiter, requireRole('admin'), asy
     url: safeClickUrl,
   });
 
+  // Defense-in-depth vs. SSRF: re-validate each subscription endpoint
+  // against the known push-service allowlist at broadcast time too.
+  // /push/subscribe enforces this on new rows, but legacy rows stored
+  // before the allowlist was added could have arbitrary URLs — we must
+  // never hand them to web-push.sendNotification.
+  const PUSH_HOST_ALLOWLIST = [
+    'fcm.googleapis.com',
+    'updates.push.services.mozilla.com',
+    'notify.windows.com',
+    'push.apple.com',
+  ];
+  function isSafePushEndpoint(raw) {
+    if (typeof raw !== 'string' || raw.length > 1024) return false;
+    let u; try { u = new URL(raw); } catch { return false; }
+    if (u.protocol !== 'https:') return false;
+    const h = u.hostname.toLowerCase();
+    for (const base of PUSH_HOST_ALLOWLIST) {
+      if (h === base || h.endsWith('.' + base)) return true;
+    }
+    return false;
+  }
+  const rejectedEndpoints = [];
+  const safeSubs = subs.filter(s => {
+    if (isSafePushEndpoint(s.endpoint)) return true;
+    rejectedEndpoints.push(s.endpoint);
+    return false;
+  });
+  if (rejectedEndpoints.length) {
+    try { await PushSubscription.deleteMany({ endpoint: { $in: rejectedEndpoints } }); } catch {}
+    log.warn({ count: rejectedEndpoints.length }, 'push_broadcast_rejected_unsafe_endpoints');
+  }
+
   let sent = 0, failed = 0;
   const staleEndpoints = [];
 
@@ -1135,8 +1167,8 @@ adminRouter.post('/push/broadcast', adminWriteLimiter, requireRole('admin'), asy
   }
 
   // Bounded concurrency: process PUSH_CONCURRENCY subscriptions at a time.
-  for (let i = 0; i < subs.length; i += PUSH_CONCURRENCY) {
-    const batch = subs.slice(i, i + PUSH_CONCURRENCY);
+  for (let i = 0; i < safeSubs.length; i += PUSH_CONCURRENCY) {
+    const batch = safeSubs.slice(i, i + PUSH_CONCURRENCY);
     await Promise.all(batch.map(sendOne));
   }
 
@@ -1148,9 +1180,9 @@ adminRouter.post('/push/broadcast', adminWriteLimiter, requireRole('admin'), asy
     actorId: req.user.id, actorEmail: req.user.loginId,
     action: 'push_broadcast', target: String(sent), outcome: 'success',
     ipHash: hashIp(req.ip), userAgent: safeText(req.get('user-agent') || '', 200),
-    diff: { title: p.data.title, url: safeClickUrl, sent, failed, pruned: staleEndpoints.length },
+    diff: { title: p.data.title, url: safeClickUrl, sent, failed, pruned: staleEndpoints.length, rejected: rejectedEndpoints.length },
   });
-  res.json({ sent, failed, pruned: staleEndpoints.length });
+  res.json({ sent, failed, pruned: staleEndpoints.length, rejected: rejectedEndpoints.length });
 });
 
 function slim(doc) {

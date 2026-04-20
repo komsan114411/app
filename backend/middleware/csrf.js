@@ -17,6 +17,11 @@ const cookieOpts = () => ({
   maxAge: 2 * 60 * 60 * 1000,
 });
 
+const clearCookieOpts = () => ({
+  path: '/',
+  domain: env.COOKIE_DOMAIN || undefined,
+});
+
 export function ensureCsrfCookie(req, res, next) {
   const existing = req.cookies && req.cookies[CSRF_COOKIE];
   if (!existing) res.cookie(CSRF_COOKIE, newCsrfToken(), cookieOpts());
@@ -25,6 +30,10 @@ export function ensureCsrfCookie(req, res, next) {
 
 export function rotateCsrfCookie(res) {
   res.cookie(CSRF_COOKIE, newCsrfToken(), cookieOpts());
+}
+
+export function clearCsrfCookie(res) {
+  res.clearCookie(CSRF_COOKIE, clearCookieOpts());
 }
 
 export function verifyCsrf(req, res, next) {
@@ -37,5 +46,11 @@ export function verifyCsrf(req, res, next) {
   let diff = 0;
   for (let i = 0; i < cookie.length; i++) diff |= cookie.charCodeAt(i) ^ header.charCodeAt(i);
   if (diff !== 0) return res.status(403).json({ error: 'csrf_mismatch' });
+  // Rotate the CSRF cookie on every verified mutation. A token leaked via
+  // browser history / dev-tools / a malicious extension stops being
+  // reusable once the legitimate user performs ANY admin action.
+  // `res.cookie()` just queues the Set-Cookie header, so this fires
+  // before headers are actually sent regardless of how the handler ends.
+  rotateCsrfCookie(res);
   next();
 }
