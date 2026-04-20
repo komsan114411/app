@@ -29,9 +29,16 @@ function opaqueVersion(raw) {
 // URLs in the /config response so the installed APK (WebView origin
 // https://localhost) and the web (same origin) both work without any
 // client-side URL rewriting.
+// Gate on TRUST_PROXY > 0 — same pattern as server.js — so that with
+// TRUST_PROXY=0 (direct exposure) an attacker cannot spoof X-Forwarded-Host
+// to inject a bogus origin into the /config payload or the in-process cache.
 function publicOriginOf(req) {
-  const fwdHost = (req.get('x-forwarded-host') || '').split(',')[0].trim();
-  const fwdProto = (req.get('x-forwarded-proto') || '').split(',')[0].trim();
+  const fwdHost = (env.TRUST_PROXY > 0)
+    ? (req.get('x-forwarded-host') || '').split(',')[0].trim()
+    : '';
+  const fwdProto = (env.TRUST_PROXY > 0)
+    ? (req.get('x-forwarded-proto') || '').split(',')[0].trim()
+    : '';
   const host = fwdHost || req.get('host') || 'localhost';
   const proto = fwdProto || (req.secure ? 'https' : 'http');
   return proto + '://' + host;
@@ -104,7 +111,7 @@ publicRouter.get('/config', publicReadLimiter, async (req, res) => {
   res.json(payload);
 });
 
-export function invalidateConfigCache() { cache = { at: 0, payload: null, version: 0 }; }
+export function invalidateConfigCache() { cache = { at: 0, payload: null, version: 0, origin: '' }; }
 
 publicRouter.post('/track', trackLimiter, validate(trackBody), async (req, res) => {
   if (req.get('dnt') === '1') return res.status(204).end();
@@ -129,18 +136,22 @@ publicRouter.post('/track', trackLimiter, validate(trackBody), async (req, res) 
 // whenever admin calls /api/admin/install-token/rotate, so a URL that
 // was shared yesterday stops working immediately the moment admin
 // regenerates. Returns only the subset of config the install page needs.
-publicRouter.get('/install/:token/config', publicReadLimiter, async (req, res) => {
-  const token = String(req.params.token || '').slice(0, 80);
+// POST (not GET) so the token is in the request body rather than the URL
+// path — prevents it from appearing in server access logs, browser history,
+// and Referer headers when the page makes subsequent requests.
+publicRouter.post('/install/config', publicReadLimiter, async (req, res) => {
+  const token = String(req.body?.token || '').slice(0, 80);
   if (!token) return res.status(400).json({ error: 'invalid_token' });
   const cfg = await getAppConfig();
   const current = cfg.installToken?.current;
   if (!current) return res.status(410).json({ error: 'not_issued' });
-  // Constant-time comparison — the token grants read-only access so timing
-  // leakage isn't catastrophic, but better safe than sorry.
-  const a = Buffer.from(token); const b = Buffer.from(current);
-  if (a.length !== b.length) return res.status(410).json({ error: 'expired' });
+  // Constant-time comparison — token grants read-only access but timing
+  // leakage still aids enumeration; pad to max-length before comparing.
+  const maxLen = Math.max(token.length, current.length);
+  const a = Buffer.alloc(maxLen); const b = Buffer.alloc(maxLen);
+  Buffer.from(token).copy(a); Buffer.from(current).copy(b);
   let diff = 0;
-  for (let i = 0; i < a.length; i++) diff |= a[i] ^ b[i];
+  for (let i = 0; i < maxLen; i++) diff |= a[i] ^ b[i];
   if (diff !== 0) return res.status(410).json({ error: 'expired' });
   const origin = publicOriginOf(req);
   const downloadLinks = { ...(cfg.downloadLinks?.toObject?.() || cfg.downloadLinks || {}) };
@@ -162,17 +173,21 @@ publicRouter.get('/install/:token/config', publicReadLimiter, async (req, res) =
 // Only the CURRENT token is accepted — rotating in the admin panel
 // immediately blocks every previously shared admin URL. Returning 410
 // (instead of 404) lets the frontend show a distinct "expired" message.
-publicRouter.get('/admin-gate/:token', publicReadLimiter, async (req, res) => {
-  const token = String(req.params.token || '').slice(0, 80);
+// POST so the token travels in the request body, not in the URL path —
+// prevents it from appearing in server access logs and browser history.
+publicRouter.post('/admin-gate', publicReadLimiter, async (req, res) => {
+  const token = String(req.body?.token || '').slice(0, 80);
   if (!token) return res.status(400).json({ error: 'invalid_token' });
   const cfg = await getAppConfig();
   const current = cfg.adminAccessToken?.current;
   if (!current) return res.status(410).json({ error: 'not_issued' });
-  // Constant-time compare
-  const a = Buffer.from(token); const b = Buffer.from(current);
-  if (a.length !== b.length) return res.status(410).json({ error: 'expired' });
+  // Constant-time compare padded to max-length so length difference
+  // does not create a timing oracle.
+  const maxLen = Math.max(token.length, current.length);
+  const a = Buffer.alloc(maxLen); const b = Buffer.alloc(maxLen);
+  Buffer.from(token).copy(a); Buffer.from(current).copy(b);
   let diff = 0;
-  for (let i = 0; i < a.length; i++) diff |= a[i] ^ b[i];
+  for (let i = 0; i < maxLen; i++) diff |= a[i] ^ b[i];
   if (diff !== 0) return res.status(410).json({ error: 'expired' });
   res.set('Cache-Control', 'no-store');
   res.json({ ok: true });

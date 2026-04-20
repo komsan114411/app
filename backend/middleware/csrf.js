@@ -2,6 +2,7 @@
 // Cookie uses __Secure- prefix: browser only accepts with Secure flag over HTTPS.
 // Client reads cookie value, echoes in X-CSRF-Token header on mutations.
 
+import crypto from 'node:crypto';
 import { newCsrfToken } from '../utils/tokens.js';
 import { env } from '../config/env.js';
 
@@ -42,10 +43,17 @@ export function verifyCsrf(req, res, next) {
   const header = req.get('X-CSRF-Token');
   if (!cookie || !header) return res.status(403).json({ error: 'csrf_missing' });
   if (typeof cookie !== 'string' || typeof header !== 'string') return res.status(403).json({ error: 'csrf_mismatch' });
-  if (cookie.length !== header.length) return res.status(403).json({ error: 'csrf_mismatch' });
-  let diff = 0;
-  for (let i = 0; i < cookie.length; i++) diff |= cookie.charCodeAt(i) ^ header.charCodeAt(i);
-  if (diff !== 0) return res.status(403).json({ error: 'csrf_mismatch' });
+  // Pad both buffers to the same length before comparing so a length
+  // difference cannot be detected via wall-clock timing (early-exit on
+  // length mismatch was a minor timing oracle). timingSafeEqual requires
+  // equal-length inputs; extra bytes are zeroed and thus always differ
+  // when the strings are not the same length, which is the correct outcome.
+  const maxLen = Math.max(cookie.length, header.length);
+  const cookieBuf = Buffer.alloc(maxLen);
+  const headerBuf = Buffer.alloc(maxLen);
+  Buffer.from(cookie).copy(cookieBuf);
+  Buffer.from(header).copy(headerBuf);
+  if (!crypto.timingSafeEqual(cookieBuf, headerBuf)) return res.status(403).json({ error: 'csrf_mismatch' });
   // Rotate the CSRF cookie on every verified mutation. A token leaked via
   // browser history / dev-tools / a malicious extension stops being
   // reusable once the legitimate user performs ANY admin action.
