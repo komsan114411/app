@@ -11,27 +11,67 @@ import { env } from '../config/env.js';
 
 export const publicRouter = Router();
 
-let cache = { at: 0, payload: null, version: 0 };
+// Resolve the public origin as the browser would see it, honouring
+// Railway/Fly proxies via X-Forwarded-Host. Used to emit ABSOLUTE media
+// URLs in the /config response so the installed APK (WebView origin
+// https://localhost) and the web (same origin) both work without any
+// client-side URL rewriting.
+function publicOriginOf(req) {
+  const fwdHost = (req.get('x-forwarded-host') || '').split(',')[0].trim();
+  const fwdProto = (req.get('x-forwarded-proto') || '').split(',')[0].trim();
+  const host = fwdHost || req.get('host') || 'localhost';
+  const proto = fwdProto || (req.secure ? 'https' : 'http');
+  return proto + '://' + host;
+}
+
+// Rewrite a /media/* or /uploads/* URL to absolute form. Absolute URLs
+// and empty strings pass through unchanged. This runs on output only —
+// the DB still stores relative paths so admin uploads + downloads keep
+// working regardless of where the app is deployed.
+function absolutize(origin, u) {
+  if (!u || typeof u !== 'string') return u || '';
+  if (/^(https?:|data:|blob:)/i.test(u)) return u;
+  if (u.startsWith('/media/') || u.startsWith('/uploads/')) return origin + u;
+  return u;
+}
+
+function materializeConfig(origin, cfg) {
+  const banners = (cfg.banners || []).map(b => ({
+    ...(b.toObject ? b.toObject() : b),
+    imageUrl: absolutize(origin, b.imageUrl),
+  }));
+  const downloadLinks = { ...(cfg.downloadLinks?.toObject?.() || cfg.downloadLinks || {}) };
+  downloadLinks.android = absolutize(origin, downloadLinks.android);
+  downloadLinks.ios     = absolutize(origin, downloadLinks.ios);
+  return {
+    appName: cfg.appName,
+    tagline: cfg.tagline,
+    appIcon: absolutize(origin, cfg.appIcon || ''),
+    theme: cfg.theme,
+    language: cfg.language || 'th',
+    darkMode: cfg.darkMode || 'auto',
+    banners,
+    buttons: publishedButtons(cfg.buttons),
+    contact: cfg.contact,
+    featureFlags: cfg.featureFlags || {},
+    downloadLinks,
+  };
+}
+
+let cache = { at: 0, payload: null, version: 0, origin: '' };
 publicRouter.get('/config', publicReadLimiter, async (req, res) => {
   const now = Date.now();
-  if (cache.payload && now - cache.at < 3_000) {
+  const origin = publicOriginOf(req);
+  // Cache is keyed on origin too: a request from https://localhost
+  // and one from the web domain must not share a materialized payload.
+  if (cache.payload && cache.origin === origin && now - cache.at < 3_000) {
     res.set('Cache-Control', 'public, max-age=3, stale-while-revalidate=10');
     res.set('X-Config-Version', String(cache.version));
     return res.json(cache.payload);
   }
   const cfg = await getAppConfig();
   const payload = {
-    appName: cfg.appName,
-    tagline: cfg.tagline,
-    appIcon: cfg.appIcon || '',
-    theme: cfg.theme,
-    language: cfg.language || 'th',
-    darkMode: cfg.darkMode || 'auto',
-    banners: cfg.banners,
-    buttons: publishedButtons(cfg.buttons),   // filter by publishAt / unpublishAt
-    contact: cfg.contact,
-    featureFlags: cfg.featureFlags || {},
-    downloadLinks: cfg.downloadLinks || {},
+    ...materializeConfig(origin, cfg),
     capabilities: {
       emailReset: !!env.SMTP_HOST,
       pushNotifications: !!(env.PUSH_VAPID_PUBLIC && env.PUSH_VAPID_PRIVATE),
@@ -39,7 +79,7 @@ publicRouter.get('/config', publicReadLimiter, async (req, res) => {
     },
     updatedAt: cfg.updatedAt,
   };
-  cache = { at: now, payload, version: cfg.updatedAt ? new Date(cfg.updatedAt).getTime() : now };
+  cache = { at: now, payload, version: cfg.updatedAt ? new Date(cfg.updatedAt).getTime() : now, origin };
   res.set('Cache-Control', 'public, max-age=3, stale-while-revalidate=10');
   res.set('X-Config-Version', String(cache.version));
   res.json(payload);
@@ -83,13 +123,17 @@ publicRouter.get('/install/:token/config', publicReadLimiter, async (req, res) =
   let diff = 0;
   for (let i = 0; i < a.length; i++) diff |= a[i] ^ b[i];
   if (diff !== 0) return res.status(410).json({ error: 'expired' });
+  const origin = publicOriginOf(req);
+  const downloadLinks = { ...(cfg.downloadLinks?.toObject?.() || cfg.downloadLinks || {}) };
+  downloadLinks.android = absolutize(origin, downloadLinks.android);
+  downloadLinks.ios     = absolutize(origin, downloadLinks.ios);
   res.set('Cache-Control', 'no-store');
   res.json({
     appName: cfg.appName,
     tagline: cfg.tagline,
-    appIcon: cfg.appIcon || '',
+    appIcon: absolutize(origin, cfg.appIcon || ''),
     theme: cfg.theme,
-    downloadLinks: cfg.downloadLinks || {},
+    downloadLinks,
     rotatedAt: cfg.installToken?.rotatedAt,
   });
 });
