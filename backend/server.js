@@ -144,7 +144,12 @@ app.use((req, res, next) => {
       "img-src 'self' data: blob: https:; " +
       "connect-src 'self' https:; " +
       "object-src 'none'; " +
-      "base-uri 'none'; " +
+      // base-uri MUST allow 'self' — index.html relies on <base href="/">
+      // to resolve relative <script src="security.jsx"> from the origin root
+      // when the page URL is a nested path like /install/<token>. Setting
+      // 'none' here silently invalidates the <base> tag, scripts 404 under
+      // the nested path, and React never mounts.
+      "base-uri 'self'; " +
       "frame-ancestors 'none'; " +
       "form-action 'self'; " +
       "upgrade-insecure-requests");
