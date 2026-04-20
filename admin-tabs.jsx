@@ -815,6 +815,12 @@ function DownloadLinksEditor({ state, setState }) {
         sub="วาง URL ไปยัง APK / Play Store / App Store · หน้าผู้ใช้จะเห็นปุ่มดาวน์โหลดอัตโนมัติ"
       />
 
+      {/* Source #0: trigger remote APK build on GitHub Actions */}
+      <RemoteApkBuilder onPickBuilt={(url) => {
+        patch({ android: url, androidLabel: dl.androidLabel || 'ดาวน์โหลด APK' });
+        toast.success('ตั้งลิงก์ APK ให้แล้ว');
+      }}/>
+
       {/* Rescue: write URL directly, bypass frontend sanitize + polling race */}
       <DirectUrlSetter dl={dl} onSet={() => {
         // Nudge local state by requesting fresh config on next tick
@@ -1184,8 +1190,143 @@ function DirectUrlSetter({ dl, onSet }) {
 }
 
 window.DownloadLinksEditor = DownloadLinksEditor;
+// ─── RemoteApkBuilder ────────────────────────────────────────
+// One-click remote build via GitHub Actions. Polls /build-apk/status
+// every 8s while a run is in_progress; when it completes it surfaces
+// the APK download URL + size + a "ใช้ลิงก์นี้" button that pipes the
+// URL straight into downloadLinks.android without another PATCH roundtrip.
+function RemoteApkBuilder({ onPickBuilt }) {
+  const [status, setStatus] = React.useState(null);  // null = loading initial, {configured, latestRun, apk}
+  const [busy, setBusy] = React.useState(false);
+  const timer = React.useRef(null);
+
+  const refresh = React.useCallback(async () => {
+    try {
+      const s = await api.buildApkStatus();
+      setStatus(s);
+      const running = s?.latestRun?.status === 'in_progress' || s?.latestRun?.status === 'queued';
+      clearTimeout(timer.current);
+      if (running) timer.current = setTimeout(refresh, 8000);
+    } catch (e) {
+      setStatus({ configured: false, error: e.message || 'failed' });
+    }
+  }, []);
+
+  React.useEffect(() => {
+    refresh();
+    return () => clearTimeout(timer.current);
+  }, [refresh]);
+
+  const build = async () => {
+    setBusy(true);
+    try {
+      await api.triggerApkBuild();
+      toast.success('เริ่ม build APK แล้ว · ประมาณ 2-3 นาที');
+      setTimeout(refresh, 3000);
+    } catch (e) {
+      if (e.message === 'build_in_progress') toast.warn('มี build กำลังทำงานอยู่แล้ว');
+      else if (e.message === 'github_not_configured') toast.error('ยังไม่ได้ตั้ง GITHUB_TOKEN ใน Railway env');
+      else toast.error('สร้าง build ไม่สำเร็จ: ' + (e.message || ''));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (!status) return null;
+  if (!status.configured) {
+    return (
+      <Card style={{ marginBottom: 14, background: '#F3EFE7', borderColor: 'rgba(180,70,58,0.2)' }}>
+        <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 4 }}>🛠 สร้าง APK อัตโนมัติ (ยังไม่เปิดใช้)</div>
+        <div style={{ fontSize: 11, color: '#6B6458', lineHeight: 1.6 }}>
+          ตั้ง env ใน Railway 3 ตัวเพื่อเปิดใช้ปุ่ม "สร้าง APK ใหม่":
+          <ul style={{ margin: '6px 0 0 18px', padding: 0 }}>
+            <li><code>GITHUB_OWNER</code> — เช่น <code>komsan114411</code></li>
+            <li><code>GITHUB_REPO</code> — เช่น <code>app</code></li>
+            <li><code>GITHUB_TOKEN</code> — Personal Access Token (scope: <code>actions:write</code> + <code>contents:read</code>)</li>
+          </ul>
+        </div>
+      </Card>
+    );
+  }
+
+  const run = status.latestRun;
+  const running = run && (run.status === 'in_progress' || run.status === 'queued');
+  const ok = run && run.status === 'completed' && run.conclusion === 'success';
+  const fail = run && run.status === 'completed' && run.conclusion !== 'success';
+  const apk = status.apk;
+
+  const pillStyle = (bg, fg) => ({
+    display: 'inline-block', padding: '2px 10px', borderRadius: 999,
+    background: bg, color: fg, fontSize: 10, fontWeight: 700, letterSpacing: 0.4,
+  });
+
+  return (
+    <Card style={{ marginBottom: 14, border: '2px solid rgba(6,199,85,0.25)', background: 'rgba(6,199,85,0.04)' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8, flexWrap: 'wrap' }}>
+        <div style={{ fontSize: 13, fontWeight: 700 }}>🛠 สร้าง APK จากหลังบ้าน</div>
+        {running && <span style={pillStyle('#FCF3D1', '#7A5A10')}>● กำลัง build</span>}
+        {ok && <span style={pillStyle('rgba(6,199,85,0.18)', '#058850')}>● สำเร็จ</span>}
+        {fail && <span style={pillStyle('rgba(180,70,58,0.15)', '#B4463A')}>● ล้มเหลว</span>}
+      </div>
+      <div style={{ fontSize: 11, color: '#6B6458', lineHeight: 1.55, marginBottom: 12 }}>
+        กดปุ่มนี้ระบบจะสั่ง GitHub Actions ให้ build APK ใหม่ ใช้เวลาประมาณ 2-3 นาที
+        · ไฟล์ที่ได้จะอัปเดตที่ลิงก์ latest-apk อัตโนมัติ · แล้วเลือก "ใช้ลิงก์นี้" เพื่อนำไปตั้งเป็นลิงก์ดาวน์โหลดได้เลย
+      </div>
+
+      {run && (
+        <div style={{ fontSize: 11, color: '#6B6458', marginBottom: 10 }}>
+          Build ล่าสุด: <strong>{run.head_commit_message?.slice(0, 60) || '(no message)'}</strong><br/>
+          เวลา: {new Date(run.updated_at || run.created_at).toLocaleString('th-TH')}
+          {run.html_url && <> · <a href={run.html_url} target="_blank" rel="noopener">ดู log</a></>}
+        </div>
+      )}
+
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: apk ? 12 : 0 }}>
+        <button onClick={build} disabled={busy || running} style={{
+          padding: '9px 16px', borderRadius: 9, border: 'none',
+          background: running ? 'rgba(0,0,0,0.08)' : '#058850', color: running ? '#6B6458' : '#fff',
+          fontFamily: 'inherit', fontSize: 12, fontWeight: 600,
+          cursor: (busy || running) ? 'wait' : 'pointer', opacity: busy ? 0.6 : 1,
+        }}>
+          {running ? 'กำลัง build…' : '🛠 สร้าง APK ใหม่'}
+        </button>
+        <button onClick={refresh} style={{
+          padding: '9px 14px', borderRadius: 9, border: '1px solid rgba(0,0,0,0.12)',
+          background: '#fff', color: '#1F1B17', fontFamily: 'inherit', fontSize: 12, cursor: 'pointer',
+        }}>🔄 รีเฟรช</button>
+      </div>
+
+      {apk && (
+        <div style={{
+          padding: '10px 12px', borderRadius: 10, background: '#fff',
+          border: '1px solid rgba(0,0,0,0.06)',
+          display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap',
+        }}>
+          <div style={{ flex: 1, minWidth: 180 }}>
+            <div style={{ fontSize: 12, fontWeight: 600 }}>app-debug.apk</div>
+            <div style={{ fontSize: 10, color: '#8F877C' }}>
+              {(apk.size / 1024 / 1024).toFixed(2)} MB · {new Date(apk.updatedAt).toLocaleString('th-TH')}
+            </div>
+          </div>
+          <a href={apk.url} target="_blank" rel="noopener" style={{
+            padding: '6px 12px', borderRadius: 7, border: '1px solid rgba(0,0,0,0.12)',
+            background: '#fff', color: '#1F1B17', textDecoration: 'none',
+            fontFamily: 'inherit', fontSize: 11,
+          }}>ดาวน์โหลด</a>
+          <button onClick={() => onPickBuilt?.(apk.url)} style={{
+            padding: '6px 12px', borderRadius: 7, border: 'none',
+            background: '#1F1B17', color: '#fff',
+            fontFamily: 'inherit', fontSize: 11, fontWeight: 600, cursor: 'pointer',
+          }}>✓ ใช้ลิงก์นี้</button>
+        </div>
+      )}
+    </Card>
+  );
+}
+
 window.ApkUploader = ApkUploader;
 window.DirectUrlSetter = DirectUrlSetter;
+window.RemoteApkBuilder = RemoteApkBuilder;
 
 function friendlyCreateError(code) {
   switch (code) {

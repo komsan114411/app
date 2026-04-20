@@ -549,6 +549,107 @@ adminRouter.delete('/uploads/apks/:id', requireRole('admin'), async (req, res) =
   res.json({ ok: true });
 });
 
+// ── Remote APK build (GitHub Actions dispatch) ──────────────
+// Railway can't build Android APKs directly — not enough RAM/disk and
+// no Android SDK. Instead the admin panel triggers the existing
+// GitHub Actions workflow, then the resulting APK is pulled from the
+// `latest-apk` release. Requires GITHUB_OWNER + GITHUB_REPO + GITHUB_TOKEN
+// env vars (token needs actions:write + contents:read).
+
+const WORKFLOW_FILE = 'android.yml';
+
+function ghConfigured() {
+  return !!(env.GITHUB_OWNER && env.GITHUB_REPO && env.GITHUB_TOKEN);
+}
+
+async function ghFetch(path, init = {}) {
+  const url = 'https://api.github.com' + path;
+  return fetch(url, {
+    ...init,
+    headers: {
+      'Accept': 'application/vnd.github+json',
+      'Authorization': 'Bearer ' + env.GITHUB_TOKEN,
+      'X-GitHub-Api-Version': '2022-11-28',
+      'User-Agent': 'baansuan-admin',
+      ...(init.headers || {}),
+    },
+  });
+}
+
+adminRouter.get('/build-apk/status', requireRole('admin'), async (req, res) => {
+  if (!ghConfigured()) return res.json({ configured: false });
+  try {
+    const runsRes = await ghFetch(`/repos/${env.GITHUB_OWNER}/${env.GITHUB_REPO}/actions/workflows/${WORKFLOW_FILE}/runs?per_page=5`);
+    if (!runsRes.ok) {
+      const body = await runsRes.text().catch(() => '');
+      log.warn({ status: runsRes.status, body: body.slice(0, 300) }, 'gh_list_runs_failed');
+      return res.status(502).json({ error: 'github_unreachable', status: runsRes.status });
+    }
+    const runs = await runsRes.json();
+    const latest = (runs.workflow_runs || [])[0];
+    const releaseRes = await ghFetch(`/repos/${env.GITHUB_OWNER}/${env.GITHUB_REPO}/releases/tags/latest-apk`);
+    let apkUrl = null, apkUpdatedAt = null, apkSize = 0;
+    if (releaseRes.ok) {
+      const rel = await releaseRes.json();
+      const asset = (rel.assets || []).find(a => a.name === 'app-debug.apk');
+      if (asset) { apkUrl = asset.browser_download_url; apkUpdatedAt = asset.updated_at; apkSize = asset.size; }
+    }
+    res.json({
+      configured: true,
+      latestRun: latest ? {
+        id: latest.id,
+        status: latest.status,              // queued | in_progress | completed
+        conclusion: latest.conclusion,      // success | failure | null
+        html_url: latest.html_url,
+        created_at: latest.created_at,
+        updated_at: latest.updated_at,
+        head_commit_message: latest.head_commit?.message || '',
+      } : null,
+      apk: apkUrl ? { url: apkUrl, updatedAt: apkUpdatedAt, size: apkSize } : null,
+    });
+  } catch (e) {
+    log.warn({ err: e?.message }, 'gh_status_error');
+    res.status(502).json({ error: 'github_unreachable' });
+  }
+});
+
+adminRouter.post('/build-apk', adminWriteLimiter, requireRole('admin'), async (req, res) => {
+  if (!ghConfigured()) return res.status(400).json({ error: 'github_not_configured' });
+
+  // Cheap rate-limit: refuse if a run is in_progress in the last 10 minutes.
+  try {
+    const runsRes = await ghFetch(`/repos/${env.GITHUB_OWNER}/${env.GITHUB_REPO}/actions/workflows/${WORKFLOW_FILE}/runs?per_page=3`);
+    if (runsRes.ok) {
+      const runs = await runsRes.json();
+      const busy = (runs.workflow_runs || []).find(r => r.status === 'in_progress' || r.status === 'queued');
+      if (busy) return res.status(409).json({ error: 'build_in_progress', runId: busy.id, html_url: busy.html_url });
+    }
+  } catch {}
+
+  try {
+    const dispatchRes = await ghFetch(`/repos/${env.GITHUB_OWNER}/${env.GITHUB_REPO}/actions/workflows/${WORKFLOW_FILE}/dispatches`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ref: 'main', inputs: {} }),
+    });
+    if (!dispatchRes.ok) {
+      const body = await dispatchRes.text().catch(() => '');
+      log.warn({ status: dispatchRes.status, body: body.slice(0, 300) }, 'gh_dispatch_failed');
+      return res.status(502).json({ error: 'dispatch_failed', status: dispatchRes.status });
+    }
+    await AuditLog.create({
+      actorId: req.user.id, actorEmail: req.user.loginId,
+      action: 'apk_build_dispatch', target: `gh:${env.GITHUB_OWNER}/${env.GITHUB_REPO}`,
+      ipHash: hashIp(req.ip), userAgent: safeText(req.get('user-agent') || '', 200),
+    });
+    // GitHub doesn't return a runId from workflow_dispatch; client polls status endpoint.
+    res.json({ ok: true, hint: 'build_started' });
+  } catch (e) {
+    log.warn({ err: e?.message }, 'gh_dispatch_error');
+    res.status(502).json({ error: 'github_unreachable' });
+  }
+});
+
 // ── Analytics (detailed per-button) ─────────────────────────
 adminRouter.get('/analytics', requireRole('admin'), async (req, res) => {
   const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);

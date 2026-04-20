@@ -138,6 +138,8 @@ const api = {
     return request('/api/admin/config/download-links', { method: 'POST', body: patch, auth: true });
   },
   async listApks()            { return request('/api/admin/uploads/apks', { auth: true }); },
+  async buildApkStatus()      { return request('/api/admin/build-apk/status', { auth: true }); },
+  async triggerApkBuild()     { return request('/api/admin/build-apk', { method: 'POST', auth: true }); },
   async deleteApk(id)         { return request(`/api/admin/uploads/apks/${encodeURIComponent(id)}`, { method: 'DELETE', auth: true }); },
   async getInstallToken()     { return request('/api/admin/install-token', { auth: true }); },
   async rotateInstallToken()  { return request('/api/admin/install-token/rotate', { method: 'POST', auth: true }); },

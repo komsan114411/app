@@ -61,6 +61,14 @@ const schema = z.object({
   // ── Logging sink for production ────────────────────────
   LOG_TRANSPORT:   z.enum(['stdout', 'loki', 'file']).default('stdout'),
   LOKI_URL:        z.string().optional(),
+
+  // ── Remote APK build (optional) ────────────────────────
+  // When all three are set, the admin panel gains a "สร้าง APK ใหม่"
+  // button that dispatches the GitHub Actions workflow. Token needs
+  // actions:write + contents:read scopes. Leave blank to hide the button.
+  GITHUB_OWNER:    z.string().optional(),
+  GITHUB_REPO:     z.string().optional(),
+  GITHUB_TOKEN:    z.string().optional(),
 });
 
 const parsed = schema.safeParse(process.env);
