@@ -249,10 +249,31 @@ if ('serviceWorker' in navigator && location.protocol !== 'file:') {
   });
 }
 
-// Boot watchdog: after 8 s, if React hasn't replaced #__boot_fallback,
-// surface an error panel with enough diagnostic info for the user to
-// fix their cache / SW. Prevents the "blank page, no clue why"
-// experience when a stale cache serves a broken script bundle.
+// Boot watchdog: after 4 s, if React hasn't replaced #__boot_fallback,
+// surface a self-repair panel. This is the escape hatch when a stale
+// Service Worker (cached index.html from before <base href="/">)
+// asks for /install/<token>/security.jsx and every script 404s,
+// leaving DEFAULT_STATE / SafeState / UserApp undefined and the
+// inline Root throwing ReferenceError before React ever mounts.
+// The button below force-unregisters every SW, clears all caches,
+// and hard-reloads — no DevTools needed.
+async function __hardRecover() {
+  try {
+    if ('serviceWorker' in navigator) {
+      const regs = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(regs.map(r => r.unregister()));
+    }
+    if ('caches' in window) {
+      const keys = await caches.keys();
+      await Promise.all(keys.map(k => caches.delete(k)));
+    }
+    try { localStorage.clear(); } catch {}
+    try { sessionStorage.clear(); } catch {}
+  } catch {}
+  location.reload(true);
+}
+window.__hardRecover = __hardRecover;
+
 window.addEventListener('DOMContentLoaded', () => {
   setTimeout(() => {
     const fb = document.getElementById('__boot_fallback');
@@ -261,11 +282,11 @@ window.addEventListener('DOMContentLoaded', () => {
     err.style.display = 'block';
     err.innerHTML =
       '<strong>โหลดไม่สำเร็จ</strong><br>' +
-      'แอปมาทางนี้มาแล้ว 8 วินาทีแต่ยังไม่ render ได้<br><br>' +
-      'วิธีแก้: เปิด DevTools → Application → Service Workers → Unregister ' +
-      'แล้ว Storage → Clear site data แล้ว Ctrl+Shift+R<br><br>' +
-      'หรือลองเปิดใน Incognito window';
-  }, 8000);
+      'แอปยังไม่ render ภายใน 4 วินาที — สาเหตุส่วนใหญ่คือ cache เก่าในเครื่อง<br><br>' +
+      '<button onclick="__hardRecover()" style="padding:10px 18px;border:none;border-radius:9px;background:#fff;color:#1F1B17;font-family:inherit;font-size:13px;font-weight:600;cursor:pointer;">' +
+      '🔄 ล้าง cache + โหลดใหม่</button>' +
+      '<br><br><span style="opacity:0.65;font-size:11px">หรือเปิดลิงก์นี้ใน Incognito</span>';
+  }, 4000);
 });
 </script>
 
@@ -905,7 +926,23 @@ function useDocumentIdentity(appName, appIcon) {
   }, [appName, appIcon]);
 }
 
-ReactDOM.createRoot(document.getElementById('root')).render(<Root/>);
+// Guard: if any mandatory global is undefined (because the matching
+// .jsx 404'd — usually stale-SW-cache requesting /install/<token>/
+// security.jsx etc.) don't even try to mount. The boot watchdog will
+// surface the recovery panel instead of a ReferenceError blank.
+try {
+  const required = { DEFAULT_STATE, SafeState, THEMES };
+  for (const k of Object.keys(required)) {
+    if (typeof required[k] === 'undefined') {
+      throw new Error('missing_global:' + k);
+    }
+  }
+  ReactDOM.createRoot(document.getElementById('root')).render(<Root/>);
+} catch (e) {
+  console.error('[boot] mount aborted:', e && e.message);
+  // Do nothing — watchdog inside index.html <head> shows the recovery
+  // panel 4 s after DOMContentLoaded.
+}
 </script>
 </body>
 </html>
