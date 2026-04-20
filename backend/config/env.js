@@ -93,6 +93,18 @@ if (parsed.data.NODE_ENV === 'production') {
     console.error('❌ JWT_SECRET and REFRESH_SECRET must be different.');
     process.exit(1);
   }
+  // APP_PUBLIC_URL is used to build password-reset links in emails. If
+  // we fall back to req.get('host') an attacker can send a forgot-
+  // password request with a spoofed Host header, making the reset URL
+  // point to attacker.com — the victim clicks, their one-time token
+  // hits the attacker's server, full account takeover. Require the
+  // env var in prod to eliminate that fallback path.
+  if (!parsed.data.APP_PUBLIC_URL || !/^https:\/\//i.test(parsed.data.APP_PUBLIC_URL)) {
+    console.error('❌ APP_PUBLIC_URL must be set to an https:// URL in production.');
+    console.error('   Password-reset emails use it as the link base; falling back to');
+    console.error('   the request Host header allows attackers to inject their own domain.');
+    process.exit(1);
+  }
 }
 
 export const env = Object.freeze(parsed.data);

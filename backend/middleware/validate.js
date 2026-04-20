@@ -6,7 +6,7 @@ export const loginBody = z.object({
   loginId: z.string().min(3).max(64).regex(/^[a-zA-Z0-9._@-]+$/, 'bad_id').transform(s => s.toLowerCase().trim()),
   password: z.string().min(1).max(200),
   totpCode: z.string().max(10).optional(),
-  backupCode: z.string().max(20).optional(),
+  backupCode: z.string().max(24).optional(),
   captchaToken: z.string().max(2048).optional(),
 });
 

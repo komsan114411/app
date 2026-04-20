@@ -34,6 +34,12 @@ const UserSchema = new mongoose.Schema({
   totpEnabled:      { type: Boolean, default: false },
   totpPendingAt:    { type: Date,   default: null, select: false },   // set by /totp/setup; /totp/enable rejects if older than 15 min
   totpBackupCodes:  { type: [String], default: [], select: false },
+  // Highest TOTP step (Date.now()/30s) we've ever accepted for this
+  // account. A captured 6-digit code is valid for ~60 seconds under
+  // the ±1 step window — blocking codes whose step ≤ lastTotpStep
+  // means each code works exactly once across its whole validity
+  // window, defeating MITM / shoulder-surf replay.
+  lastTotpStep:     { type: Number, default: 0,   select: false },
 
   failedLoginCount: { type: Number, default: 0, select: false },
   lockUntil:        { type: Date,   default: null, select: false },

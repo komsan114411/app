@@ -9,7 +9,7 @@ import { PasswordResetToken } from '../models/PasswordResetToken.js';
 import {
   signAccess, issueRefresh, rotateRefresh, revokeRefresh, revokeAllForUser,
 } from '../utils/tokens.js';
-import { verifyToken as verifyTotp, hashBackupCode } from '../utils/totp.js';
+import { verifyTokenDelta as verifyTotpDelta, currentTotpStep, hashBackupCode } from '../utils/totp.js';
 import { loginLimiter, loginBurstLimiter, forgotLimiter } from '../middleware/rateLimit.js';
 import { enforceIpGuard, recordIpFailure, clearIpFailures } from '../middleware/ipGuard.js';
 import { verifyCaptcha } from '../middleware/captcha.js';
@@ -55,7 +55,7 @@ authRouter.post('/login', enforceIpGuard, loginBurstLimiter, loginLimiter, verif
   const ua = safeText(req.get('user-agent') || '', 200);
 
   const user = await User.findOne({ loginId })
-    .select('+passwordHash +failedLoginCount +lockUntil +totpSecret +totpBackupCodes');
+    .select('+passwordHash +failedLoginCount +lockUntil +totpSecret +totpBackupCodes +lastTotpStep');
 
   if (!user) {
     await User.verifyDummy(password);
@@ -89,7 +89,27 @@ authRouter.post('/login', enforceIpGuard, loginBurstLimiter, loginLimiter, verif
       return res.status(401).json({ error: 'totp_required' });
     }
     let totpOk = false;
-    if (totpCode) totpOk = verifyTotp(user.totpSecret, totpCode);
+    if (totpCode) {
+      // Resolve which step the code matched, then atomically bump
+      // lastTotpStep so the SAME code (or any earlier code still in
+      // the ±1-step window) cannot be replayed — even if an attacker
+      // captured it via phishing / MITM / shoulder-surf.
+      const delta = verifyTotpDelta(user.totpSecret, totpCode);
+      if (delta !== null) {
+        const usedStep = currentTotpStep() + delta;
+        const prev = Number(user.lastTotpStep) || 0;
+        if (usedStep > prev) {
+          const bump = await User.updateOne(
+            { _id: user._id, $or: [{ lastTotpStep: { $lt: usedStep } }, { lastTotpStep: { $exists: false } }] },
+            { $set: { lastTotpStep: usedStep } },
+          );
+          if (bump.modifiedCount > 0) totpOk = true;
+          // If modifiedCount === 0 another request won the race — the
+          // code was already consumed this step, reject as replay.
+        }
+        // usedStep <= prev ⇒ replay of an already-consumed code
+      }
+    }
     if (!totpOk && backupCode) {
       // Constant-time backup-code check. Array.prototype.includes stops at
       // the first match — so timing leaks which stored hash matches earliest.
@@ -228,7 +248,17 @@ authRouter.post('/forgot-password', enforceIpGuard, forgotLimiter, verifyCaptcha
     ipHash: hashIp(req.ip),
   });
 
-  const base = env.APP_PUBLIC_URL || `https://${req.get('host') || 'localhost'}`;
+  // Never derive the link base from the request Host header — an
+  // attacker can send forgot-password with Host: attacker.com and
+  // the victim would get an email linking to attacker.com/?reset=...
+  // Production enforces APP_PUBLIC_URL at boot (config/env.js). For
+  // dev/test we allow the request Host so local loopback works.
+  const base = env.APP_PUBLIC_URL
+    || (env.NODE_ENV === 'production' ? null : `https://${req.get('host') || 'localhost'}`);
+  if (!base) {
+    log.error('reset_link_base_missing — APP_PUBLIC_URL not set in production');
+    return res.status(204).end();
+  }
   const link = `${base}/?reset=${encodeURIComponent(token)}`;
 
   try {

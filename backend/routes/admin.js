@@ -18,7 +18,7 @@ import { uploadSingle, uploadApk, isApkBuffer, isImageBuffer, MIME_TO_EXT, APK_M
 import { MediaAsset } from '../models/MediaAsset.js';
 import { sanitizeConfig, hashIp, safeText, safeUrl } from '../utils/sanitize.js';
 import { revokeAllForUser, revokeOne } from '../utils/tokens.js';
-import { generateSecret, qrDataUrl, verifyToken as verifyTotp, generateBackupCodes, hashBackupCode } from '../utils/totp.js';
+import { generateSecret, qrDataUrl, verifyTokenDelta as verifyTotpDelta, currentTotpStep, generateBackupCodes, hashBackupCode } from '../utils/totp.js';
 import { toCsvStream } from '../utils/csv.js';
 import { invalidateConfigCache } from './public.js';
 import { env } from '../config/env.js';
@@ -246,7 +246,8 @@ adminRouter.get('/stats/timeseries', requireRole('admin', 'editor'), async (req,
 adminRouter.get('/config', requireRole('admin', 'editor'), async (req, res) => {
   const cfg = await getAppConfig();
   res.json({
-    appName: cfg.appName, tagline: cfg.tagline, theme: cfg.theme,
+    appName: cfg.appName, tagline: cfg.tagline, appIcon: cfg.appIcon || '',
+    theme: cfg.theme,
     language: cfg.language || 'th', darkMode: cfg.darkMode || 'auto',
     banners: cfg.banners, buttons: cfg.buttons, contact: cfg.contact,
     featureFlags: cfg.featureFlags || {},
@@ -1047,11 +1048,16 @@ adminRouter.post('/me/totp/enable', adminWriteLimiter, async (req, res) => {
     await User.updateOne({ _id: me._id }, { $set: { totpSecret: '', totpPendingAt: null } });
     return res.status(400).json({ error: 'setup_expired' });
   }
-  if (!verifyTotp(me.totpSecret, p.data.code)) return res.status(400).json({ error: 'invalid_totp' });
+  const enableDelta = verifyTotpDelta(me.totpSecret, p.data.code);
+  if (enableDelta === null) return res.status(400).json({ error: 'invalid_totp' });
+  // Seed lastTotpStep so the very code the admin just used to enable
+  // 2FA cannot be replayed as a login code within its validity window.
+  const enableStep = currentTotpStep() + enableDelta;
   const codes = generateBackupCodes(10);
   me.totpEnabled = true;
   me.totpPendingAt = null;
   me.totpBackupCodes = codes.map(hashBackupCode);
+  me.lastTotpStep = enableStep;
   await me.save();
   await AuditLog.create({
     actorId: me._id, actorEmail: me.loginId, action: 'totp_enable',
@@ -1069,7 +1075,10 @@ adminRouter.post('/me/totp/disable', adminWriteLimiter, async (req, res) => {
   if (!me) return res.status(401).json({ error: 'unauthorized' });
   const ok = await me.verifyPassword(p.data.password);
   if (!ok) return res.status(401).json({ error: 'invalid_credentials' });
-  await User.updateOne({ _id: me._id }, { $set: { totpEnabled: false, totpSecret: '', totpBackupCodes: [] } });
+  // Reset lastTotpStep on disable so a future re-enable starts fresh
+  // (the user may re-bind a different authenticator app with a
+  // brand-new secret; the old step counter would be meaningless).
+  await User.updateOne({ _id: me._id }, { $set: { totpEnabled: false, totpSecret: '', totpBackupCodes: [], lastTotpStep: 0 } });
   await AuditLog.create({
     actorId: me._id, actorEmail: me.loginId, action: 'totp_disable',
     ipHash: hashIp(req.ip), userAgent: safeText(req.get('user-agent') || '', 200),

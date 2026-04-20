@@ -147,8 +147,8 @@ function AuthGate({ onSuccess }) {
         {needsTotp && useBackup && (
           <>
             <label style={{ ...authLabel, marginTop: 14 }}>Backup code</label>
-            <input type="text" value={backupCode} onChange={e => setBackupCode(e.target.value.slice(0, 20))}
-              placeholder="xxxxx-xxxxx" autoFocus style={{ ...inputStyle, fontFamily: 'ui-monospace, monospace' }}/>
+            <input type="text" value={backupCode} onChange={e => setBackupCode(e.target.value.slice(0, 24))}
+              placeholder="xxxx-xxxx-xxxx-xxxx" autoFocus style={{ ...inputStyle, fontFamily: 'ui-monospace, monospace' }}/>
             <button type="button" onClick={() => setUseBackup(false)} style={linkBtn}>
               ใช้ TOTP แทน
             </button>
@@ -252,7 +252,7 @@ function ForgotPasswordForm({ onClose }) {
             <div style={{ fontSize: 12, color: '#6B6458', lineHeight: 1.55, marginBottom: 16 }}>
               {emailAvailable
                 ? 'หากมีบัญชีตรงกับอีเมลที่ตั้งไว้ ระบบส่งลิงก์รีเซ็ตให้แล้ว (มีอายุ 30 นาที)'
-                : 'ระบบรับคำขอแล้ว แต่ <strong>ไม่ได้ส่งอีเมลจริง</strong> เพราะ SMTP ยังไม่ได้ตั้งค่า · ติดต่อ admin'}
+                : <>ระบบรับคำขอแล้ว แต่ <strong>ไม่ได้ส่งอีเมลจริง</strong> เพราะ SMTP ยังไม่ได้ตั้งค่า · ติดต่อ admin</>}
             </div>
             <button onClick={onClose} style={{ width: '100%', padding: '10px', borderRadius: 9, border: 'none',
               background: '#1F1B17', color: '#fff', fontFamily: 'inherit', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
