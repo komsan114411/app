@@ -122,11 +122,45 @@ app.use(helmet({
   xssFilter: false,
 }));
 
-// Per-path CSP: strict for API, delegated to <meta> tag for HTML.
+// Per-path CSP: strict for API, looser (but still hardened) for HTML.
+// frame-ancestors can only be enforced via the HTTP header, not the
+// <meta> tag — so we set it here regardless of path to plug that gap.
+// Permissions-Policy disables browser features we never use so a future
+// XSS can't e.g. silently enable the microphone.
 app.use((req, res, next) => {
   if (req.path.startsWith('/api/') || req.path === '/healthz' || req.path === '/readyz') {
     res.setHeader('Content-Security-Policy',
       "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'");
+  } else {
+    // HTML: allow what index.html needs but lock down the ambient
+    // privileges an XSS would otherwise inherit.
+    res.setHeader('Content-Security-Policy',
+      "default-src 'self'; " +
+      "script-src 'self' 'unsafe-inline' https://unpkg.com; " +
+      "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; " +
+      "font-src 'self' https://fonts.gstatic.com data:; " +
+      "img-src 'self' data: blob: https:; " +
+      "connect-src 'self' https:; " +
+      "object-src 'none'; " +
+      "base-uri 'none'; " +
+      "frame-ancestors 'none'; " +
+      "form-action 'self'; " +
+      "upgrade-insecure-requests");
+  }
+  res.setHeader('Permissions-Policy',
+    'accelerometer=(), camera=(), geolocation=(), gyroscope=(), ' +
+    'magnetometer=(), microphone=(), payment=(), usb=(), interest-cohort=()');
+  next();
+});
+
+// Block TRACE/TRACK globally. They were designed for debugging but enable
+// Cross-Site Tracing attacks where an attacker can reflect HttpOnly
+// cookies back through a TRACE response and read them from another origin.
+// Express doesn't handle TRACE natively, but Node's http server does —
+// explicitly reject here before any other middleware can echo headers.
+app.use((req, res, next) => {
+  if (req.method === 'TRACE' || req.method === 'TRACK') {
+    return res.status(405).set('Allow', 'GET,HEAD,POST,PATCH,DELETE,OPTIONS').end();
   }
   next();
 });

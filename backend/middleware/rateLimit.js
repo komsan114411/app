@@ -1,55 +1,55 @@
 // middleware/rateLimit.js — Tiered limiters with optional Redis store.
 // Set REDIS_URL to share state across multiple instances/workers. Otherwise
 // memory store (default) — fine for a single process.
+//
+// Implementation note: the previous version wrapped each limiter in an
+// async function that tried to swap .options.store after construction on
+// the first request. express-rate-limit 7.x captures the store at
+// construction time, so the swap was a no-op — AND the async wrapper
+// interfered with the limiter's sync counting, so limits never fired
+// (verified externally: 15 bad logins all 401, no 429). Now we build
+// the Redis-backed store up front synchronously when REDIS_URL is set,
+// fall back to memory store if anything fails.
 
 import rateLimit from 'express-rate-limit';
 import { env } from '../config/env.js';
 import { log } from '../utils/logger.js';
 
+// Top-level await: set up the shared Redis client once, synchronously
+// from the caller's POV. If REDIS_URL isn't set or the connection fails,
+// every limiter transparently uses the in-process MemoryStore.
 let redisClient = null;
 let RedisStoreCls = null;
-
-async function getStore(prefix) {
-  if (!env.REDIS_URL) return undefined;   // fall back to memory store
+if (env.REDIS_URL) {
   try {
-    if (!redisClient) {
-      const { default: Redis } = await import('ioredis');
-      redisClient = new Redis(env.REDIS_URL, { maxRetriesPerRequest: 2, lazyConnect: false });
-      redisClient.on('error', (e) => log.warn({ err: e.message }, 'redis_error'));
-    }
-    if (!RedisStoreCls) {
-      const mod = await import('rate-limit-redis');
-      RedisStoreCls = mod.default || mod.RedisStore;
-    }
-    return new RedisStoreCls({
-      sendCommand: (...args) => redisClient.call(...args),
-      prefix: `rl:${prefix}:`,
-    });
+    const { default: Redis } = await import('ioredis');
+    redisClient = new Redis(env.REDIS_URL, { maxRetriesPerRequest: 2, lazyConnect: false });
+    redisClient.on('error', (e) => log.warn({ err: e.message }, 'redis_error'));
+    const mod = await import('rate-limit-redis');
+    RedisStoreCls = mod.default || mod.RedisStore;
   } catch (e) {
-    log.warn({ err: e.message }, 'redis_rate_limit_unavailable');
-    return undefined;
+    log.warn({ err: e.message }, 'redis_rate_limit_unavailable_fallback_memory');
+    redisClient = null;
+    RedisStoreCls = null;
   }
 }
 
+function redisStoreFor(prefix) {
+  if (!redisClient || !RedisStoreCls) return undefined;
+  return new RedisStoreCls({
+    sendCommand: (...args) => redisClient.call(...args),
+    prefix: `rl:${prefix}:`,
+  });
+}
+
 function make(prefix, opts) {
-  const limiter = rateLimit({
+  return rateLimit({
     standardHeaders: 'draft-7',
     legacyHeaders: false,
     handler: (req, res) => res.status(429).json({ error: 'rate_limited' }),
+    store: redisStoreFor(prefix),      // undefined → default MemoryStore
     ...opts,
   });
-  // Lazily attach the store on first request so boot isn't blocked if Redis is slow.
-  let init = false;
-  return async (req, res, next) => {
-    if (!init) {
-      init = true;
-      try {
-        const store = await getStore(prefix);
-        if (store) limiter.options.store = store;
-      } catch (e) { log.warn({ err: e.message }, 'rl_store_fallback_memory'); }
-    }
-    return limiter(req, res, next);
-  };
 }
 
 export const globalLimiter      = make('global',   { windowMs: 60_000,         max: 300, keyGenerator: r => r.ip });
