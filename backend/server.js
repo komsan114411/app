@@ -434,12 +434,28 @@ app.use((err, req, res, _next) => {
   if (err && err.message === 'cors_blocked') {
     return res.status(403).json({ error: 'cors_blocked' });
   }
-  // Invalid JSON
+  // body-parser error taxonomy — map ALL known types to 4xx so a
+  // weird-but-legitimate Content-Type (e.g. "application/json;
+  // charset=latin-1") can't bubble into a 500 "internal_error". Pen-test
+  // reproducer: POST /api/auth/login Content-Type: application/json;
+  // charset=latin-1 was returning 500 because iconv-lite rejects
+  // "latin-1" with a dash (it expects "latin1"), body-parser surfaces
+  // the rejection as `encoding.unsupported`, and our handler used to
+  // log+500 anything unknown.
   if (err && err.type === 'entity.parse.failed') {
     return res.status(400).json({ error: 'invalid_json' });
   }
   if (err && err.type === 'entity.too.large') {
     return res.status(413).json({ error: 'payload_too_large' });
+  }
+  if (err && (err.type === 'charset.unsupported' || err.type === 'encoding.unsupported')) {
+    return res.status(415).json({ error: 'unsupported_charset' });
+  }
+  if (err && (err.type === 'entity.verify.failed' || err.type === 'request.size.invalid')) {
+    return res.status(400).json({ error: 'invalid_request' });
+  }
+  if (err && err.type === 'request.aborted') {
+    return res.status(400).json({ error: 'aborted' });
   }
   log.error({ err, path: req.path }, 'unhandled_error');
   res.status(500).json({ error: 'internal_error' });

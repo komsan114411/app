@@ -23,11 +23,23 @@ export function signAccess(user) {
   );
 }
 
+// PREV is only consulted during the explicit rotation grace window.
+// Without a TTL, a forgotten PREV env var leaves the prior secret
+// valid forever — which is worse than simply never rotating, because
+// two live secrets double the blast radius of any leak. Operators set
+// JWT_SECRET_PREV_UNTIL to an ISO-8601 timestamp; after that instant
+// PREV is ignored even if still configured.
+function prevSecretIsLive() {
+  if (!env.JWT_SECRET_PREV) return false;
+  if (!env.JWT_SECRET_PREV_UNTIL) return true;   // no TTL set → still live (legacy behaviour)
+  return Date.now() < Date.parse(env.JWT_SECRET_PREV_UNTIL);
+}
+
 export function verifyAccess(token) {
   try {
     return jwt.verify(token, env.JWT_SECRET, { algorithms: ['HS256'] });
   } catch (primaryErr) {
-    if (env.JWT_SECRET_PREV) {
+    if (prevSecretIsLive()) {
       try {
         return jwt.verify(token, env.JWT_SECRET_PREV, { algorithms: ['HS256'] });
       } catch { /* fall through */ }

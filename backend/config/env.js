@@ -12,6 +12,12 @@ const schema = z.object({
 
   JWT_SECRET:      z.string().min(32, 'JWT_SECRET must be at least 32 chars'),
   JWT_SECRET_PREV: z.string().min(32).optional(),   // rotation: accept old signatures during grace window
+  // Hard expiry for JWT_SECRET_PREV — ISO-8601 timestamp. Once the
+  // current time passes it, verifyAccess ignores PREV even if the env
+  // var is still set. This closes the "operator forgot to remove PREV
+  // after rotation" failure mode, which otherwise leaves the old
+  // secret valid indefinitely.
+  JWT_SECRET_PREV_UNTIL: z.string().datetime({ offset: true }).optional(),
   REFRESH_SECRET:  z.string().min(32, 'REFRESH_SECRET must be at least 32 chars'),
 
   ARGON2_MEMORY:   z.coerce.number().int().min(19456).max(524288).default(65536),
