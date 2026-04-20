@@ -1,6 +1,6 @@
 // sw.js — Service worker: offline shell + stale-while-revalidate + web push.
 
-const VERSION = 'v39';
+const VERSION = 'v40';
 const SHELL = 'shell-' + VERSION;
 
 // Public-surface JSX only. Admin-only bundles (auth-gate, admin-app,
@@ -57,6 +57,27 @@ self.addEventListener('activate', (event) => {
 //       silently stripped /media/*.apk URLs before they reached the
 //       server. Cache-first kept the bug frozen across deploys.)
 //   • css / png / svg / fonts        → cache-first (safe to be stale)
+// Admin-surface JSX (admin-app / admin-tabs / auth-gate / twofa-setup /
+// dashboard-tab / session-list / system-status / chart) and any URL
+// under /admin are NEVER persisted to cache. Network-first still lets
+// legit admins load fresh code; skipping cache.put means an admin who
+// logs out, hands off a phone, or has their device seized doesn't leave
+// admin code resident in the service-worker cache for offline replay.
+const ADMIN_JSX = new Set([
+  '/admin-app.jsx',
+  '/admin-tabs.jsx',
+  '/auth-gate.jsx',
+  '/twofa-setup.jsx',
+  '/dashboard-tab.jsx',
+  '/session-list.jsx',
+  '/system-status.jsx',
+  '/chart.jsx',
+]);
+function isAdminUrl(pathname) {
+  return pathname.startsWith('/admin/')
+      || pathname === '/admin'
+      || ADMIN_JSX.has(pathname);
+}
 self.addEventListener('fetch', (event) => {
   const req = event.request;
   if (req.method !== 'GET') return;
@@ -66,21 +87,24 @@ self.addEventListener('fetch', (event) => {
   if (url.pathname.startsWith('/media/')) return;
   if (url.origin !== self.location.origin) return;
 
+  const admin = isAdminUrl(url.pathname);
   const isCritical = /\.(jsx|html)$/.test(url.pathname)
                   || url.pathname === '/'
                   || url.pathname === '/install'
                   || url.pathname.startsWith('/install/')
-                  || url.pathname.startsWith('/admin/');
+                  || admin;
 
   event.respondWith((async () => {
     const cache = await caches.open(SHELL);
     if (isCritical) {
-      // Network-first: always fetch latest, fall back to cache only offline
+      // Network-first: always fetch latest, fall back to cache only offline.
+      // Admin responses bypass cache.put entirely — see ADMIN_JSX comment.
       try {
         const res = await fetch(req);
-        if (res.ok) cache.put(req, res.clone()).catch(() => {});
+        if (res.ok && !admin) cache.put(req, res.clone()).catch(() => {});
         return res;
       } catch {
+        if (admin) throw new Error('offline_admin_not_cached');
         const cached = await cache.match(req);
         if (cached) return cached;
         throw new Error('offline');

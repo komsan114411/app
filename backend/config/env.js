@@ -33,7 +33,10 @@ const schema = z.object({
   TRUST_PROXY:     z.coerce.number().int().min(0).max(10).default(1),
 
   ADMIN_LOGIN_ID:  z.string().min(3).max(64).optional(),
-  ADMIN_PASSWORD:  z.string().min(1).max(200).optional(),
+  // Min-length 16 — prevents an operator from shipping a weak admin password
+  // via env (including the ADMIN_FORCE_RESET break-glass path which bypasses
+  // zxcvbn/HIBP checks). Previously min:1 allowed a single-char password.
+  ADMIN_PASSWORD:  z.string().min(16, 'ADMIN_PASSWORD must be at least 16 chars').max(200).optional(),
   // Break-glass admin recovery: when set to "true" or "1", the boot seed
   // flow will OVERWRITE the admin's password (identified by ADMIN_LOGIN_ID)
   // with ADMIN_PASSWORD on the next start, bypassing zxcvbn/HIBP checks.

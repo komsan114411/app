@@ -8,8 +8,17 @@ import { User } from './models/User.js';
 import { getAppConfig } from './models/AppConfig.js';
 import { log } from './utils/logger.js';
 
-const DEFAULT_LOGIN_ID = (env.ADMIN_LOGIN_ID || 'admin123').toLowerCase();
-const DEFAULT_PASSWORD = env.ADMIN_PASSWORD || 'admin123';
+// Hard-fail if the operator didn't provide BOTH env vars. Previously this
+// file silently fell back to "admin123/admin123" — a critical exposure if
+// the seed script ran in a misconfigured environment. Forcing the operator
+// to supply credentials (or call the auto-seed path in server.js which
+// generates a random one-time password) eliminates the fallback.
+if (!env.ADMIN_LOGIN_ID || !env.ADMIN_PASSWORD) {
+  log.fatal('seed requires ADMIN_LOGIN_ID and ADMIN_PASSWORD env vars — refusing to use default credentials');
+  process.exit(1);
+}
+const DEFAULT_LOGIN_ID = env.ADMIN_LOGIN_ID.toLowerCase();
+const DEFAULT_PASSWORD = env.ADMIN_PASSWORD;
 
 async function main() {
   await connectDB();

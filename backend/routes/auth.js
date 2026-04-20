@@ -111,18 +111,31 @@ authRouter.post('/login', enforceIpGuard, loginBurstLimiter, loginLimiter, verif
       }
     }
     if (!totpOk && backupCode) {
-      // Constant-time backup-code check. Array.prototype.includes stops at
-      // the first match — so timing leaks which stored hash matches earliest.
-      // We scan every code unconditionally with timingSafeEqual and accumulate
-      // any match in a single bit.
+      // True constant-time backup-code check. We pad to a fixed slot count
+      // (MAX_BACKUP_SLOTS) and always run timingSafeEqual exactly that many
+      // times against a same-length buffer, so the wall-clock cost is
+      // independent of (a) which code matched, (b) how many codes remain
+      // after previous consumptions, and (c) whether any stored code had
+      // a length mismatch. Every iteration performs the same work.
+      const MAX_BACKUP_SLOTS = 10;
       const candidateHex = hashBackupCode(backupCode);
       const candidate = Buffer.from(candidateHex, 'hex');
+      const zeroBuf = Buffer.alloc(candidate.length);
+      const stored = user.totpBackupCodes || [];
       let matched = 0;
-      for (const stored of (user.totpBackupCodes || [])) {
-        let storedBuf;
-        try { storedBuf = Buffer.from(String(stored), 'hex'); } catch { storedBuf = null; }
-        if (!storedBuf || storedBuf.length !== candidate.length) continue;
-        if (crypto.timingSafeEqual(storedBuf, candidate)) matched = 1;
+      for (let i = 0; i < MAX_BACKUP_SLOTS; i++) {
+        let buf = zeroBuf;
+        const s = stored[i];
+        if (s) {
+          try {
+            const tmp = Buffer.from(String(s), 'hex');
+            if (tmp.length === candidate.length) buf = tmp;
+          } catch { /* fall through with zeroBuf */ }
+        }
+        // Always run the compare — even against the zero buffer — so the
+        // iteration cost is identical whether a slot is empty, malformed,
+        // or a real hash.
+        if (crypto.timingSafeEqual(buf, candidate)) matched = 1;
       }
       if (matched) {
         // Atomic single-use: only succeed if the code was still present at

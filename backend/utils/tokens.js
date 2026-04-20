@@ -9,7 +9,16 @@ import { RefreshToken } from '../models/RefreshToken.js';
 
 const ACCESS_TTL  = '15m';
 const REFRESH_TTL_MS = 7 * 24 * 60 * 60 * 1000;
-const GRACE_WINDOW_MS = 10 * 1000;
+// Short grace window — enough to absorb a legit in-flight retry after a
+// network blip, not enough to let a stolen refresh token ride in parallel
+// with the legit session for many seconds. Previously 10s — a stolen cookie
+// could issue a fresh access token without ever tripping reuse detection.
+const GRACE_WINDOW_MS = 2 * 1000;
+// Issuer/audience pinning: even if JWT_SECRET is ever reused across
+// services (staging ↔ prod, secondary microservices, etc.), tokens will
+// not cross-validate because the aud/iss mismatch rejects the signature.
+const JWT_ISSUER = env.APP_PUBLIC_URL || 'admin-api';
+const JWT_AUDIENCE = 'admin-api';
 
 function hashToken(raw) {
   return crypto.createHash('sha256').update(raw).digest('hex');
@@ -19,7 +28,13 @@ export function signAccess(user) {
   return jwt.sign(
     { sub: String(user._id), role: user.role, v: user.tokenVersion || 0 },
     env.JWT_SECRET,
-    { algorithm: 'HS256', expiresIn: ACCESS_TTL, jwtid: crypto.randomUUID() }
+    {
+      algorithm: 'HS256',
+      expiresIn: ACCESS_TTL,
+      jwtid: crypto.randomUUID(),
+      issuer: JWT_ISSUER,
+      audience: JWT_AUDIENCE,
+    }
   );
 }
 
@@ -36,12 +51,17 @@ function prevSecretIsLive() {
 }
 
 export function verifyAccess(token) {
+  const opts = {
+    algorithms: ['HS256'],
+    issuer: JWT_ISSUER,
+    audience: JWT_AUDIENCE,
+  };
   try {
-    return jwt.verify(token, env.JWT_SECRET, { algorithms: ['HS256'] });
+    return jwt.verify(token, env.JWT_SECRET, opts);
   } catch (primaryErr) {
     if (prevSecretIsLive()) {
       try {
-        return jwt.verify(token, env.JWT_SECRET_PREV, { algorithms: ['HS256'] });
+        return jwt.verify(token, env.JWT_SECRET_PREV, opts);
       } catch { /* fall through */ }
     }
     throw primaryErr;
@@ -85,7 +105,17 @@ export async function rotateRefresh(rawToken, meta = {}) {
 
   if (existing.revokedAt && existing.revokeReason === 'rotated') {
     const age = now.getTime() - new Date(existing.revokedAt).getTime();
-    if (age < GRACE_WINDOW_MS) return { grace: true, userId: existing.userId, jti };
+    if (age < GRACE_WINDOW_MS) {
+      // Still within the legit-retry window — permit, but bind to the
+      // original rotator's IP. If the grace hit comes from a different
+      // network address it's almost certainly a stolen cookie racing the
+      // real client, so treat it as reuse.
+      const graceIp = (meta.ip || '').slice(0, 64);
+      if (existing.rotatedIp && graceIp && existing.rotatedIp !== graceIp) {
+        return { reuse: true, userId: existing.userId, jti };
+      }
+      return { grace: true, userId: existing.userId, jti };
+    }
   }
   return { reuse: true, userId: existing.userId, jti };
 }

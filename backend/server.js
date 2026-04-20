@@ -10,6 +10,8 @@ import mongoSanitize from 'express-mongo-sanitize';
 import pinoHttp from 'pino-http';
 import path from 'node:path';
 import fs from 'node:fs';
+import crypto from 'node:crypto';
+import mongoose from 'mongoose';
 import { fileURLToPath } from 'node:url';
 
 import { env } from './config/env.js';
@@ -183,7 +185,15 @@ app.use((req, res, next) => {
   if (!origin) return next();  // some legit clients (curl, mobile libs) omit — SameSite still protects
   let orHost = '';
   try { orHost = new URL(origin).host.toLowerCase(); } catch { return res.status(403).json({ error: 'bad_origin' }); }
-  const fwdHost = (req.get('x-forwarded-host') || '').split(',')[0].trim().toLowerCase();
+  // Only honour X-Forwarded-Host when we actually trust the proxy that set
+  // it. With TRUST_PROXY=0 and the app exposed directly, an attacker can
+  // attach `X-Forwarded-Host: evil.com` and `Origin: https://evil.com` and
+  // pass this same-origin check — defence-in-depth broken. Gating on
+  // TRUST_PROXY > 0 keeps the legitimate proxy case working while shutting
+  // the spoof path.
+  const fwdHost = (env.TRUST_PROXY > 0)
+    ? (req.get('x-forwarded-host') || '').split(',')[0].trim().toLowerCase()
+    : '';
   const selfHost = (fwdHost || req.get('host') || '').toLowerCase();
   if (selfHost && orHost === selfHost) return next();
   try {
@@ -244,11 +254,16 @@ app.use((req, res, next) => {
   // Auto-allow same-origin without requiring it in CORS_ORIGINS.
   // Behind a proxy, Host can be the internal hostname while the browser's
   // Origin is the public one — prefer X-Forwarded-Host when trust_proxy is on.
+  // When trust_proxy is 0 (direct exposure) we IGNORE X-Forwarded-Host to
+  // prevent spoofing: an attacker crafting both Origin and X-Forwarded-Host
+  // to the same bogus value would otherwise bypass the CORS allow-list.
   const origin = req.get('origin');
   if (origin) {
     try {
       const o = new URL(origin);
-      const fwdHost = (req.get('x-forwarded-host') || '').split(',')[0].trim();
+      const fwdHost = (env.TRUST_PROXY > 0)
+        ? (req.get('x-forwarded-host') || '').split(',')[0].trim()
+        : '';
       const host = fwdHost || req.get('host');
       if (host && o.host.toLowerCase() === host.toLowerCase()) return next();
     } catch {}
@@ -272,8 +287,16 @@ app.use(mongoSanitize({
   onSanitize: ({ req, key }) => log.warn({ key, path: req.path }, 'mongo_sanitize_triggered'),
 }));
 
-// Cookies (needs secret for signed cookies — reuse JWT secret domain-separated)
-app.use(cookieParser(env.JWT_SECRET));
+// Cookies — derive a dedicated signing secret via HKDF so cookie MACs and
+// JWT HMACs live in disjoint keyspaces. Previously we passed JWT_SECRET
+// straight into cookieParser, which violated the "domain separation" we
+// claimed in the comment: a collision or downgrade on one construction
+// could bleed into the other. HKDF-SHA256 with a distinct label cleanly
+// separates them without requiring a second env var.
+const COOKIE_SIGNING_SECRET = Buffer.from(
+  crypto.hkdfSync('sha256', env.JWT_SECRET, Buffer.alloc(0), 'cookie-signing-v1', 32)
+).toString('hex');
+app.use(cookieParser(COOKIE_SIGNING_SECRET));
 
 // Compression — EXCLUDE auth endpoints to mitigate BREACH/CRIME side-channel.
 // Any response that can contain tokens or reflect user-chosen input must not be compressed.
@@ -292,8 +315,18 @@ app.use(globalLimiter);
 app.use(ensureCsrfCookie);
 
 // ── Healthcheck ─────────────────────────────────────────────
+// /healthz is a liveness probe — the process is up. /readyz is a readiness
+// probe — dependencies are healthy enough to accept traffic. Returning
+// ready before Mongo is reachable causes orchestrators to send traffic
+// that immediately errors, so readyz inspects mongoose.connection.
 app.get('/healthz', (req, res) => res.json({ ok: true, t: Date.now() }));
-app.get('/readyz',  (req, res) => res.json({ ok: true }));
+app.get('/readyz',  (req, res) => {
+  const dbReady = mongoose.connection?.readyState === 1;
+  if (!dbReady) {
+    return res.status(503).json({ ok: false, db: false, readyState: mongoose.connection?.readyState ?? -1 });
+  }
+  res.json({ ok: true, db: true });
+});
 
 // Browsers auto-request /favicon.ico even with <link rel="icon" href="...">.
 // We don't ship a .ico raster; redirect to the SVG so the tab icon works
@@ -379,7 +412,10 @@ app.use('/uploads', (req, res, next) => {
 // reconnaissance gold. The dotfiles option already blocks .env and
 // .git, but backend/.env is NOT a dotfile at the URL level, and
 // backend/server.js isn't dotted at all. So we filter by prefix.
-const BLOCKED_DIR_PREFIXES = ['/backend/', '/node_modules/', '/mobile/', '/test/', '/.github/', '/scripts/', '/android/'];
+const BLOCKED_DIR_PREFIXES = [
+  '/backend/', '/node_modules/', '/mobile/', '/test/', '/.github/',
+  '/scripts/', '/android/', '/ops/', '/_design_source/',
+];
 app.use((req, res, next) => {
   if (req.method !== 'GET' && req.method !== 'HEAD') return next();
   const p = req.path.toLowerCase();
@@ -387,10 +423,14 @@ app.use((req, res, next) => {
     if (p === pfx.slice(0, -1) || p.startsWith(pfx)) return res.status(404).json({ error: 'not_found' });
   }
   // Also block specific top-level artefacts that have no reason to be
-  // served: package.json, tsconfig, ESLint, git, build configs.
+  // served: package.json, tsconfig, ESLint, git, build configs, and
+  // top-level docs that describe internal architecture to attackers.
   const BLOCKED_TOP = new Set([
     '/package.json', '/package-lock.json', '/pnpm-lock.yaml', '/yarn.lock',
     '/tsconfig.json', '/railway.json', '/readme.md', '/dockerfile',
+    '/security.md', '/makefile', '/renovate.json', '/log.md',
+    '/.env', '/.env.example', '/.env.local', '/.env.production',
+    '/deploy.md',
   ]);
   if (BLOCKED_TOP.has(p)) return res.status(404).json({ error: 'not_found' });
   next();
