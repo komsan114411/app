@@ -97,8 +97,6 @@ function AuthGate({ onSuccess }) {
     }
   };
 
-  const fillDefault = () => { setLoginId('admin123'); setPassword('admin123'); };
-
   return (
     <div style={{
       minHeight: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -125,13 +123,13 @@ function AuthGate({ onSuccess }) {
         <label style={authLabel}>Login ID</label>
         <input type="text" value={loginId} onChange={e => setLoginId(e.target.value.slice(0, 64))}
           required autoComplete="username" autoCapitalize="off" autoCorrect="off" spellCheck={false}
-          maxLength={64} placeholder="admin123" disabled={busy || locked || needsTotp}
+          maxLength={64} placeholder="" disabled={busy || locked || needsTotp}
           style={inputStyle}/>
 
         <label style={{ ...authLabel, marginTop: 14 }}>รหัสผ่าน</label>
         <input type="password" value={password} onChange={e => setPassword(e.target.value.slice(0, 200))}
           required autoComplete="current-password" minLength={1} maxLength={200}
-          placeholder="admin123" disabled={busy || locked || needsTotp}
+          placeholder="" disabled={busy || locked || needsTotp}
           style={inputStyle}/>
 
         {needsTotp && !useBackup && (
@@ -188,22 +186,7 @@ function AuthGate({ onSuccess }) {
           </div>
         )}
 
-        <div style={{
-          marginTop: 16, padding: '10px 12px', borderRadius: 9,
-          background: 'rgba(210,150,40,0.1)', border: '1px dashed rgba(210,150,40,0.4)',
-          fontSize: 11, color: '#7A5A10', lineHeight: 1.55,
-        }}>
-          <strong>เปิดใช้ครั้งแรก:</strong> Login ID <code>admin123</code> รหัส <code>admin123</code>
-          <button type="button" onClick={fillDefault} disabled={busy || locked} style={{
-            marginLeft: 6, padding: '2px 8px', borderRadius: 5,
-            border: '1px solid rgba(210,150,40,0.5)', background: 'rgba(255,255,255,0.7)',
-            fontFamily: 'inherit', fontSize: 10, cursor: 'pointer', color: '#7A5A10',
-          }}>เติมให้</button>
-          <br/>
-          <span style={{ opacity: 0.8 }}>ระบบจะบังคับเปลี่ยนรหัสทันทีหลังเข้าระบบ</span>
-        </div>
-
-        <div style={{ fontSize: 10, color: '#8F877C', textAlign: 'center', marginTop: 14, lineHeight: 1.5 }}>
+        <div style={{ fontSize: 10, color: '#8F877C', textAlign: 'center', marginTop: 18, lineHeight: 1.5 }}>
           argon2id · JWT rotation · ล็อกอัตโนมัติหลังผิด 10 ครั้ง
         </div>
       </form>

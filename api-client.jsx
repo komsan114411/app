@@ -29,6 +29,11 @@ function readCookie(name) {
 
 let refreshInflight = null;
 
+// Gate noisy diagnostics behind an explicit opt-in so ordinary users
+// don't leak capability / boot state to anyone with DevTools access.
+// Developers can enable with `window.__DEBUG = true` in the console.
+const DEBUG = () => (typeof window !== 'undefined' && window.__DEBUG === true);
+
 async function request(path, { method = 'GET', body, auth = false, retry = true, headers: extraHeaders } = {}) {
   const headers = { 'Accept': 'application/json', ...(extraHeaders || {}) };
   if (body !== undefined && !(body instanceof FormData)) headers['Content-Type'] = 'application/json';
@@ -52,7 +57,7 @@ async function request(path, { method = 'GET', body, auth = false, retry = true,
       credentials: 'include', cache: 'no-store',
     });
   } catch (e) {
-    if (typeof console !== 'undefined') console.error('[api]', method, path, 'network_error:', e?.message || e);
+    if (DEBUG()) console.error('[api]', method, path, 'network_error:', e?.message || e);
     throw new Error('request_failed');
   }
 
@@ -191,14 +196,16 @@ async function loadInitialState() {
   if (!API_BASE && !LIVE_POSSIBLE) return { state: DEFAULT_STATE, live: false, authed: false };
   try {
     const cfg = await api.getConfig();
-    if (typeof console !== 'undefined') console.info('[boot] /api/config OK', { appName: cfg && cfg.appName, capabilities: cfg && cfg.capabilities });
+    if (DEBUG()) console.info('[boot] /api/config OK', { appName: cfg && cfg.appName, capabilities: cfg && cfg.capabilities });
     const merged = SafeState.sanitize({ ...DEFAULT_STATE, ...cfg }) || DEFAULT_STATE;
     const authed = await tryRefresh();
     return { state: merged, live: true, authed };
   } catch (e) {
     const msg = (e && e.message) || String(e);
-    try { window.__bootError = msg; } catch {}
-    if (typeof console !== 'undefined') console.error('[boot] live mode failed — falling back to demo:', msg);
+    // Don't write error onto window — even innocuous strings help an
+    // attacker with XSS read boot context. Surface it to the caller
+    // via the return value, which the UI already uses.
+    if (DEBUG()) console.error('[boot] live mode failed — falling back to demo:', msg);
     return { state: DEFAULT_STATE, live: false, authed: false, error: msg };
   }
 }

@@ -72,10 +72,13 @@ jobs:
       - name: Prepare web assets with API_BASE
         working-directory: mobile
         env:
-          # Falls back to the Railway production URL so push-triggered
-          # builds aren't shipped in demo mode. Override via the workflow-
-          # dispatch input when pointing the APK at a staging backend.
-          API_BASE: ${{ github.event.inputs.api_base || 'https://app-production-a9d9.up.railway.app' }}
+          # Read from workflow-dispatch input OR the API_BASE_URL repo
+          # secret. Never hardcode a production URL here — baking a
+          # fallback exposes the backend origin via APK decompilation
+          # (apktool → strings → domain). An empty value tells
+          # prepare-web.js to ship same-origin only, which is safe
+          # for sideloaded builds pointed at a specific host.
+          API_BASE: ${{ github.event.inputs.api_base || secrets.API_BASE_URL || '' }}
         run: node scripts/prepare-web.js
 
       - name: Sync Capacitor

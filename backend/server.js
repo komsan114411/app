@@ -507,14 +507,46 @@ async function ensureBootstrapped() {
     }
 
     // ── Normal first-boot auto-seed ────────────────────────────────────
+    // Generate a strong random password if the operator didn't supply
+    // one via ADMIN_PASSWORD. Previously the fallback was the literal
+    // string "admin123" — that's a critical time-of-deploy race:
+    // anyone scanning new Railway/Fly/Render URLs for the seconds
+    // between deploy-finished and first-admin-login could log in with
+    // admin123/admin123 and (since mustChangePassword doesn't gate
+    // /me/password when the flag is on) immediately set their own
+    // password, locking the real operator out. The random fallback
+    // closes that window — the legitimate operator reads the
+    // one-time password from the boot log and logs in.
     const adminCount = await User.countDocuments({ role: 'admin' });
     if (adminCount === 0) {
-      const loginId = (env.ADMIN_LOGIN_ID || 'admin123').toLowerCase();
-      const password = env.ADMIN_PASSWORD || 'admin123';
+      const loginId = (env.ADMIN_LOGIN_ID || 'admin').toLowerCase();
+      let password = env.ADMIN_PASSWORD;
+      let generated = false;
+      if (!password) {
+        // 24 chars of base64url = ~144 bits of entropy. Print ONCE so
+        // the operator can copy from logs; never written anywhere else.
+        const cryptoMod = await import('node:crypto');
+        password = cryptoMod.randomBytes(18).toString('base64url');
+        generated = true;
+      }
       const u = new User({ loginId, role: 'admin', mustChangePassword: true });
       await u.setPasswordUnsafe(password);
       await u.save();
-      log.warn({ loginId }, '🔐 auto-seeded first admin — MUST change the default password on first login');
+      if (generated) {
+        const line = '═'.repeat(72);
+        console.log('\n' + line);
+        console.log('  🔐  FIRST-ADMIN ONE-TIME PASSWORD');
+        console.log('');
+        console.log('      loginId:  ' + loginId);
+        console.log('      password: ' + password);
+        console.log('');
+        console.log('  Log in at /admin and set a real password. This value is');
+        console.log('  shown ONCE — copy it now. Setting ADMIN_PASSWORD in env');
+        console.log('  on subsequent boots overrides this generator.');
+        console.log(line + '\n');
+      } else {
+        log.warn({ loginId }, '🔐 auto-seeded first admin from ADMIN_PASSWORD env — change on first login');
+      }
     }
 
     // Admin-access token (kept for backward compat with any old shared

@@ -35,7 +35,21 @@ const refreshCookieOpts = () => ({
 
 const GENERIC_LOGIN_FAIL = { error: 'invalid_credentials' };
 
+// Equalize wall-clock time on every failure path so an attacker can't
+// distinguish "user exists, wrong password" (which does one extra
+// atomicRecordFail write) from "no such user" (which skips it) via
+// timing. 600ms comfortably exceeds the tail latency of argon2id
+// verify + a couple of Mongo writes on the slowest supported
+// hardware; tune downward if p99 login is consistently faster.
+const LOGIN_FAIL_FLOOR_MS = 600;
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+async function floorLoginTime(t0) {
+  const elapsed = Date.now() - t0;
+  if (elapsed < LOGIN_FAIL_FLOOR_MS) await sleep(LOGIN_FAIL_FLOOR_MS - elapsed);
+}
+
 authRouter.post('/login', enforceIpGuard, loginBurstLimiter, loginLimiter, verifyCaptcha, validate(loginBody), async (req, res) => {
+  const t0 = Date.now();
   const { loginId, password, totpCode, backupCode } = req.body;
   const ipHash = hashIp(req.ip);
   const ua = safeText(req.get('user-agent') || '', 200);
@@ -47,6 +61,7 @@ authRouter.post('/login', enforceIpGuard, loginBurstLimiter, loginLimiter, verif
     await User.verifyDummy(password);
     await recordIpFailure(req, 'login_unknown');
     await AuditLog.create({ actorEmail: loginId, action: 'login_unknown', outcome: 'failure', ipHash, userAgent: ua });
+    await floorLoginTime(t0);
     return res.status(401).json(GENERIC_LOGIN_FAIL);
   }
 
@@ -64,6 +79,7 @@ authRouter.post('/login', enforceIpGuard, loginBurstLimiter, loginLimiter, verif
       action: inactive ? 'login_disabled' : locked ? 'login_locked' : 'login_fail',
       outcome: 'failure', ipHash, userAgent: ua,
     });
+    await floorLoginTime(t0);
     return res.status(401).json(GENERIC_LOGIN_FAIL);
   }
 
@@ -178,15 +194,28 @@ const forgotBody = z.object({
 });
 
 authRouter.post('/forgot-password', enforceIpGuard, forgotLimiter, verifyCaptcha, async (req, res) => {
+  // Fixed minimum response time defeats timing-based user enumeration:
+  // without it, non-existent users return in tens of ms while real
+  // users trigger a full token-generate + sendMail cycle taking 1-5s,
+  // and attackers can distinguish the two by latency.
+  const startedAt = Date.now();
+  const MIN_RESPONSE_MS = 900;
+  const padResponse = async () => {
+    const elapsed = Date.now() - startedAt;
+    if (elapsed < MIN_RESPONSE_MS) {
+      await new Promise(r => setTimeout(r, MIN_RESPONSE_MS - elapsed));
+    }
+  };
+
   // Signal email availability via header so UI can show an informational
   // message. This does NOT leak whether the account exists.
   if (!env.SMTP_HOST) res.set('X-Email-Available', '0');
 
   const parsed = forgotBody.safeParse(req.body);
   // Always return 204 to avoid user enumeration.
-  if (!parsed.success) return res.status(204).end();
+  if (!parsed.success) { await padResponse(); return res.status(204).end(); }
   const user = await User.findOne({ loginId: parsed.data.loginId });
-  if (!user || user.disabledAt || !user.email) return res.status(204).end();
+  if (!user || user.disabledAt || !user.email) { await padResponse(); return res.status(204).end(); }
 
   const tokenId = crypto.randomBytes(8).toString('hex');
   const rawSecret = crypto.randomBytes(24).toString('base64url');
@@ -210,6 +239,7 @@ authRouter.post('/forgot-password', enforceIpGuard, forgotLimiter, verifyCaptcha
     });
   } catch {}
   await AuditLog.create({ actorId: user._id, actorEmail: user.loginId, action: 'password_reset_request', ipHash: hashIp(req.ip), userAgent: safeText(req.get('user-agent') || '', 200) });
+  await padResponse();
   res.status(204).end();
 });
 

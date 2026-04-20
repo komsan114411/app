@@ -1,6 +1,7 @@
 // routes/public.js — Unauthenticated endpoints.
 
 import { Router } from 'express';
+import crypto from 'node:crypto';
 import { getAppConfig, publishedButtons } from '../models/AppConfig.js';
 import { ClickEvent } from '../models/ClickEvent.js';
 import { PushSubscription } from '../models/PushSubscription.js';
@@ -10,6 +11,18 @@ import { hashIp, safeText } from '../utils/sanitize.js';
 import { env } from '../config/env.js';
 
 export const publicRouter = Router();
+
+// Opaque tag used in X-Config-Version. Earlier versions emitted the
+// raw millisecond timestamp so the client could coalesce updates —
+// but that doubled as a deploy clock an attacker could poll to
+// fingerprint restarts / config pushes. HMAC with a per-process salt
+// keeps the tag useful (same input → same output within the process,
+// changes when config actually updates) while leaking no temporal
+// info across processes.
+const CONFIG_VERSION_SALT = crypto.randomBytes(16);
+function opaqueVersion(raw) {
+  return crypto.createHmac('sha256', CONFIG_VERSION_SALT).update(String(raw)).digest('hex').slice(0, 16);
+}
 
 // Resolve the public origin as the browser would see it, honouring
 // Railway/Fly proxies via X-Forwarded-Host. Used to emit ABSOLUTE media
@@ -72,7 +85,7 @@ publicRouter.get('/config', publicReadLimiter, async (req, res) => {
   // and one from the web domain must not share a materialized payload.
   if (cache.payload && cache.origin === origin && now - cache.at < 3_000) {
     res.set('Cache-Control', 'public, max-age=3, stale-while-revalidate=10');
-    res.set('X-Config-Version', String(cache.version));
+    res.set('X-Config-Version', opaqueVersion(cache.version));
     return res.json(cache.payload);
   }
   const cfg = await getAppConfig();
@@ -87,7 +100,7 @@ publicRouter.get('/config', publicReadLimiter, async (req, res) => {
   };
   cache = { at: now, payload, version: cfg.updatedAt ? new Date(cfg.updatedAt).getTime() : now, origin };
   res.set('Cache-Control', 'public, max-age=3, stale-while-revalidate=10');
-  res.set('X-Config-Version', String(cache.version));
+  res.set('X-Config-Version', opaqueVersion(cache.version));
   res.json(payload);
 });
 

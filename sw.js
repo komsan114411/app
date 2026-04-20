@@ -1,8 +1,15 @@
 // sw.js — Service worker: offline shell + stale-while-revalidate + web push.
 
-const VERSION = 'v34';
+const VERSION = 'v36';
 const SHELL = 'shell-' + VERSION;
 
+// Public-surface JSX only. Admin-only bundles (auth-gate, admin-app,
+// admin-tabs, session-list, twofa-setup, dashboard-tab, system-status,
+// chart) are deliberately NOT pre-cached: anonymous visitors have no
+// reason to download them, and pre-caching left an old copy behind
+// after deploys — patched security regexes wouldn't take effect for
+// users whose SW was installed pre-patch. Admin paths use network-first
+// in the fetch handler below, so authed users still get fresh code.
 const SHELL_FILES = [
   './',
   './index.html',
@@ -16,18 +23,10 @@ const SHELL_FILES = [
   './install-page.jsx',
   './install-share.jsx',
   './user-app.jsx',
-  './auth-gate.jsx',
-  './dashboard-tab.jsx',
-  './admin-tabs.jsx',
-  './admin-app.jsx',
-  './system-status.jsx',
   './push-setup.jsx',
   './download-links.jsx',
   './consent-banner.jsx',
   './drag-list.jsx',
-  './twofa-setup.jsx',
-  './session-list.jsx',
-  './chart.jsx',
   './qr-share.jsx',
   './saved-indicator.jsx',
   './online-indicator.jsx',
