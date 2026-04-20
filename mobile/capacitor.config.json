@@ -1,5 +1,5 @@
 {
-  "appId": "com.myapp.baansuan",
+  "appId": "com.example.myapp",
   "appName": "MyApp",
   "webDir": "www",
   "bundledWebRuntime": false,

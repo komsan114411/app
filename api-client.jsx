@@ -7,9 +7,9 @@ const LIVE_POSSIBLE = typeof location !== 'undefined' && location.protocol !== '
 // API origin. In the web deploy API_BASE is empty and the browser resolves
 // /media/xxx.png against the current origin — works fine. Inside the
 // Capacitor APK, the WebView origin is https://localhost and /media/xxx.png
-// would 404 locally; we need https://app-production-a9d9.up.railway.app/media/xxx.png
-// instead. This helper is safe to call on absolute URLs (returned unchanged)
-// and on empty values (returned empty).
+// would 404 locally; we need <API_BASE>/media/xxx.png instead. This helper
+// is safe to call on absolute URLs (returned unchanged) and on empty
+// values (returned empty).
 function absolutizeMedia(u) {
   if (!u || typeof u !== 'string') return '';
   if (/^(https?:|data:|blob:)/i.test(u)) return u;

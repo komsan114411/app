@@ -301,20 +301,16 @@ app.get('/readyz',  (req, res) => res.json({ ok: true }));
 // content-type:text/html and break the favicon silently).
 app.get('/favicon.ico', (req, res) => res.redirect(301, '/icon.svg'));
 
-// Explicit robots.txt — disallows admin + install token URLs from crawl
-// and the API surface. Without this, the SPA fallback would serve
-// index.html as text/html and crawlers treat the whole site as
-// indexable (including accidentally-shared /install/:token URLs).
+// Explicit robots.txt. We intentionally do NOT list admin or install
+// paths here — a robots.txt Disallow advertises sensitive routes to
+// every attacker who reads it, and is not a security control (well-
+// behaved crawlers obey it, nobody else). The admin / install / media
+// paths are already guarded server-side by rotating tokens, auth,
+// and random asset IDs; that's the real defence. Sensitive responses
+// emit X-Robots-Tag: noindex inline where it actually matters.
 app.get('/robots.txt', (req, res) => {
   res.type('text/plain').send([
     'User-agent: *',
-    'Disallow: /admin',
-    'Disallow: /admin/',
-    'Disallow: /install/',
-    'Disallow: /download/',
-    'Disallow: /api/',
-    'Disallow: /media/',
-    'Disallow: /uploads/',
     'Allow: /',
     '',
   ].join('\n'));

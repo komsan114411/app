@@ -576,7 +576,7 @@ async function ghFetch(path, init = {}) {
       'Accept': 'application/vnd.github+json',
       'Authorization': 'Bearer ' + env.GITHUB_TOKEN,
       'X-GitHub-Api-Version': '2022-11-28',
-      'User-Agent': 'baansuan-admin',
+      'User-Agent': 'myapp-admin',
       ...(init.headers || {}),
     },
   });

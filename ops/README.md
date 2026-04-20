@@ -32,8 +32,8 @@ Nightly encrypted `mongodump` uploaded to S3 (or local `./backups` fallback).
 5. Add a Turnstile site (see env vars `TURNSTILE_SECRET`).
 
 ## Restore procedure (drill quarterly)
-1. `aws s3 cp s3://$BACKUP_BUCKET/baansuan-YYYY-MM-DD.dump.gz.enc .`
-2. `openssl enc -aes-256-cbc -pbkdf2 -d -in baansuan-*.dump.gz.enc -k "$PASS" | gunzip | mongorestore --archive --uri "$STAGING_MONGO_URI"`
+1. `aws s3 cp s3://$BACKUP_BUCKET/myapp-YYYY-MM-DD.dump.gz.enc .`
+2. `openssl enc -aes-256-cbc -pbkdf2 -d -in myapp-*.dump.gz.enc -k "$PASS" | gunzip | mongorestore --archive --uri "$STAGING_MONGO_URI"`
 3. Boot a staging instance pointing at the restored DB.
 4. Smoke-test login + admin page + one config save.
 5. Document time-to-restore in `incidents.md`.

@@ -5,7 +5,7 @@
 #   MONGO_URI=... BACKUP_BUCKET=s3://... BACKUP_PASSPHRASE=... ops/backup.sh
 #
 # Requirements on the host: mongodump, openssl, aws CLI (or rclone).
-# Produces a gzip+openssl-encrypted dump: baansuan-YYYY-MM-DD.dump.gz.enc
+# Produces a gzip+openssl-encrypted dump: myapp-YYYY-MM-DD.dump.gz.enc
 #
 # RESTORE:
 #   openssl enc -aes-256-cbc -pbkdf2 -d -in backup.dump.gz.enc -k "$PASS" | gunzip | mongorestore --archive --uri "$MONGO_URI"
@@ -16,7 +16,7 @@ set -euo pipefail
 : "${BACKUP_PASSPHRASE:?BACKUP_PASSPHRASE is required (store in secret manager)}"
 
 STAMP=$(date -u +%Y-%m-%d)
-OUT="baansuan-${STAMP}.dump.gz.enc"
+OUT="myapp-${STAMP}.dump.gz.enc"
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 

@@ -2,27 +2,27 @@
 // We keep everything in one parent and pass down.
 
 const DEFAULT_STATE = {
-  appName: 'บ้านสวนออร์แกนิก',
-  tagline: 'ฟาร์มผักปลอดสาร · ส่งตรงจากสวน',
+  appName: 'ตัวอย่างแอป',
+  tagline: 'ลิงก์อินไบโอ · ตั้งค่าทุกอย่างได้จากหลังบ้าน',
   appIcon: '',   // admin-uploaded square icon; empty = fallback to first letter
   theme: 'cream', // cream | sage | midnight | sunset
   banners: [
-    { id: 'b1', title: 'ผักสดวันนี้', subtitle: 'เก็บเช้านี้ · ส่งบ่ายนี้', tone: 'leaf' },
-    { id: 'b2', title: 'โปรฯ สมาชิกใหม่', subtitle: 'ลด 15% สั่งครั้งแรก', tone: 'sun' },
-    { id: 'b3', title: 'ชุดผักประจำสัปดาห์', subtitle: '7 ชนิด · 299 บาท', tone: 'clay' },
+    { id: 'b1', title: 'แบนเนอร์ที่ 1', subtitle: 'ข้อความย่อยตัวอย่าง', tone: 'leaf' },
+    { id: 'b2', title: 'แบนเนอร์ที่ 2', subtitle: 'ข้อความย่อยตัวอย่าง', tone: 'sun' },
+    { id: 'b3', title: 'แบนเนอร์ที่ 3', subtitle: 'ข้อความย่อยตัวอย่าง', tone: 'clay' },
   ],
   buttons: [
-    { id: 'q1', label: 'สั่งผัก', sub: 'เมนูประจำวัน', icon: 'leaf', url: 'https://shop.baansuan.co/menu', linkType: 'external' },
-    { id: 'q2', label: 'สมาชิกรายเดือน', sub: 'ประหยัดกว่า 20%', icon: 'star', url: 'https://baansuan.co/membership', linkType: 'external' },
-    { id: 'q3', label: 'โปรโมชั่น', sub: '3 รายการใหม่', icon: 'tag', url: 'https://baansuan.co/promo', linkType: 'external' },
-    { id: 'q4', label: 'สูตรอาหาร', sub: 'จากเชฟประจำบ้าน', icon: 'book', url: 'https://baansuan.co/recipes', linkType: 'external' },
-    { id: 'q5', label: 'ติดตามคำสั่งซื้อ', sub: '', icon: 'truck', url: 'https://baansuan.co/orders', linkType: 'external' },
-    { id: 'q6', label: 'จุดรับสินค้า', sub: 'ทั่วกรุงเทพฯ', icon: 'pin', url: 'https://maps.google.com/?q=baansuan', linkType: 'map' },
+    { id: 'q1', label: 'ปุ่มที่ 1', sub: 'คำอธิบาย',   icon: 'leaf',    url: '', linkType: 'external' },
+    { id: 'q2', label: 'ปุ่มที่ 2', sub: 'คำอธิบาย',   icon: 'star',    url: '', linkType: 'external' },
+    { id: 'q3', label: 'ปุ่มที่ 3', sub: 'คำอธิบาย',   icon: 'tag',     url: '', linkType: 'external' },
+    { id: 'q4', label: 'ปุ่มที่ 4', sub: 'คำอธิบาย',   icon: 'book',    url: '', linkType: 'external' },
+    { id: 'q5', label: 'ปุ่มที่ 5', sub: '',           icon: 'truck',   url: '', linkType: 'external' },
+    { id: 'q6', label: 'ปุ่มที่ 6', sub: 'คำอธิบาย',   icon: 'pin',     url: '', linkType: 'map' },
   ],
   contact: {
-    label: 'ทักแอดมินทางไลน์',
+    label: 'ติดต่อแอดมิน',
     channel: 'line', // line | messenger | whatsapp | phone | email
-    value: '@baansuan',
+    value: '',
   },
 };
 

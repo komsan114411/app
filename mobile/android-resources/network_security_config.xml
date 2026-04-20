@@ -14,12 +14,12 @@
     </trust-anchors>
   </base-config>
 
-  <!-- Pin the Railway domain if you want extra hardening. Uncomment and
+  <!-- Pin your API domain if you want extra hardening. Uncomment and
        replace the SHA-256 hash(es) from your cert chain. Certificates
        rotate so keep at least two (current + backup) pins. -->
   <!--
   <domain-config>
-    <domain includeSubdomains="true">app-production-a9d9.up.railway.app</domain>
+    <domain includeSubdomains="true">your-domain.example.com</domain>
     <pin-set expiration="2027-04-19">
       <pin digest="SHA-256">REPLACE_ME_WITH_YOUR_PIN_HASH=</pin>
       <pin digest="SHA-256">REPLACE_ME_WITH_BACKUP_PIN_HASH=</pin>

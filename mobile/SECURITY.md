@@ -25,7 +25,7 @@ attacks each one prevents.
 | Resource shrinking | Unused resources stripped from APK |
 | Debug log stripping (`Log.v/d/i` → no-ops) | Accidentally-logged sensitive data never reaches runtime |
 | APK v2 + v3 signing | Tampered APKs fail to install (Android verifies signature) |
-| `android:debuggable="false"` (automatic in release) | No `adb shell run-as com.myapp.baansuan` |
+| `android:debuggable="false"` (automatic in release) | No `adb shell run-as <your.package.id>` |
 
 ## Setting up release signing (one-time)
 
@@ -67,7 +67,7 @@ To enable:
 
 ```bash
 # Get the SHA-256 pin of your current cert:
-openssl s_client -connect app-production-a9d9.up.railway.app:443 -servername app-production-a9d9.up.railway.app </dev/null 2>/dev/null \
+openssl s_client -connect your-domain.example.com:443 -servername your-domain.example.com </dev/null 2>/dev/null \
   | openssl x509 -pubkey -noout \
   | openssl pkey -pubin -outform der \
   | openssl dgst -sha256 -binary \

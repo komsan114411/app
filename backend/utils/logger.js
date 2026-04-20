@@ -21,7 +21,7 @@ const baseOpts = {
     ],
     censor: '[REDACTED]',
   },
-  base: { pid: process.pid, app: 'baansuan' },
+  base: { pid: process.pid, app: 'myapp' },
   timestamp: pino.stdTimeFunctions.isoTime,
 };
 
@@ -29,7 +29,7 @@ let transport = undefined;
 if (env.LOG_TRANSPORT === 'loki' && env.LOKI_URL) {
   transport = pino.transport({
     target: 'pino-loki',
-    options: { host: env.LOKI_URL, labels: { app: 'baansuan', env: env.NODE_ENV } },
+    options: { host: env.LOKI_URL, labels: { app: 'myapp', env: env.NODE_ENV } },
   });
 } else if (env.LOG_TRANSPORT === 'file') {
   transport = pino.transport({

@@ -1,9 +1,9 @@
 {
-  "name": "baansuan-api",
+  "name": "myapp-api",
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "Production backend for Baansuan link-in-bio app",
+  "description": "Production backend for the link-in-bio app",
   "engines": {
     "node": ">=20.10.0"
   },

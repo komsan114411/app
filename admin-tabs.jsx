@@ -800,7 +800,7 @@ function DownloadLinksEditor({ state, setState }) {
   const autofillAndroid = () => {
     const trimmed = (repo || '').trim().replace(/^https?:\/\/(www\.)?github\.com\//i, '').replace(/\/+$/, '');
     const m = trimmed.match(/^([a-z0-9-]+)\/([a-z0-9._-]+)$/i);
-    if (!m) { toast.error('ใส่รูปแบบ owner/repo เช่น komsan114411/app'); return; }
+    if (!m) { toast.error('ใส่รูปแบบ owner/repo เช่น your-user/your-repo'); return; }
     const [, owner, name] = m;
     rememberRepo(trimmed);
     const url = `https://github.com/${owner}/${name}/releases/download/latest-apk/app-debug.apk`;
@@ -842,7 +842,7 @@ function DownloadLinksEditor({ state, setState }) {
         </div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           <input type="text" value={repo} onChange={e => setRepo(e.target.value.slice(0, 100))}
-            placeholder="komsan114411/app"
+            placeholder="your-user/your-repo"
             style={{ flex: 1, minWidth: 200, padding: '8px 12px', borderRadius: 9, border: '1px solid rgba(0,0,0,0.12)', background: '#fff', fontFamily: 'inherit', fontSize: 13 }}/>
           <button onClick={autofillAndroid} style={{
             padding: '8px 16px', borderRadius: 9, border: 'none',
@@ -1081,12 +1081,18 @@ function DirectUrlSetter({ dl, onSet }) {
   const [busy, setBusy] = React.useState(false);
   const [msg, setMsg] = React.useState(null);
 
-  const presets = [
-    {
-      label: 'GitHub Release (latest APK)',
-      url: 'https://github.com/komsan114411/app/releases/download/latest-apk/app-debug.apk',
-    },
-  ];
+  // Presets let the admin one-click-paste a URL into the field. The
+  // GitHub Release URL template is derived from the two envs the backend
+  // exposes via /build-apk/status — nothing hardcoded per deployment.
+  const [presets, setPresets] = React.useState([]);
+  React.useEffect(() => {
+    (async () => {
+      try {
+        const s = await api.buildApkStatus();
+        if (s?.apk?.url) setPresets([{ label: 'Latest build', url: s.apk.url }]);
+      } catch {}
+    })();
+  }, []);
 
   const save = async () => {
     const trimmed = (url || '').trim();
@@ -1240,8 +1246,8 @@ function RemoteApkBuilder({ onPickBuilt }) {
         <div style={{ fontSize: 11, color: '#6B6458', lineHeight: 1.6 }}>
           ตั้ง env ใน Railway 3 ตัวเพื่อเปิดใช้ปุ่ม "สร้าง APK ใหม่":
           <ul style={{ margin: '6px 0 0 18px', padding: 0 }}>
-            <li><code>GITHUB_OWNER</code> — เช่น <code>komsan114411</code></li>
-            <li><code>GITHUB_REPO</code> — เช่น <code>app</code></li>
+            <li><code>GITHUB_OWNER</code> — ชื่อผู้ใช้ / organization บน GitHub</li>
+            <li><code>GITHUB_REPO</code> — ชื่อ repository</li>
             <li><code>GITHUB_TOKEN</code> — Personal Access Token (scope: <code>actions:write</code> + <code>contents:read</code>)</li>
           </ul>
         </div>
