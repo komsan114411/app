@@ -165,6 +165,39 @@ app.use((req, res, next) => {
   next();
 });
 
+// Strict Origin/Referer guard on state-changing API requests.
+// SameSite=Strict cookies already stop classic CSRF, and we have
+// double-submit CSRF tokens on admin mutations, but checking Origin
+// HERE provides defense-in-depth: a compromised browser extension or
+// a novel CSRF vector (e.g. cache poisoning that serves forgery HTML
+// from our own origin) still gets blocked. Allowed origins:
+//   • our own public host (derived from Host/X-Forwarded-Host)
+//   • the Capacitor APK origins (https://localhost, capacitor://localhost)
+//   • any CORS_ORIGINS env entry
+const STATE_CHANGING = new Set(['POST', 'PATCH', 'PUT', 'DELETE']);
+const APK_ORIGINS = new Set(['https://localhost', 'capacitor://localhost', 'ionic://localhost']);
+app.use((req, res, next) => {
+  if (!STATE_CHANGING.has(req.method)) return next();
+  if (!req.path.startsWith('/api/')) return next();
+  const origin = req.get('origin') || req.get('referer') || '';
+  if (!origin) return next();  // some legit clients (curl, mobile libs) omit — SameSite still protects
+  let orHost = '';
+  try { orHost = new URL(origin).host.toLowerCase(); } catch { return res.status(403).json({ error: 'bad_origin' }); }
+  const fwdHost = (req.get('x-forwarded-host') || '').split(',')[0].trim().toLowerCase();
+  const selfHost = (fwdHost || req.get('host') || '').toLowerCase();
+  if (selfHost && orHost === selfHost) return next();
+  try {
+    const ou = new URL(origin);
+    const norm = (ou.protocol + '//' + ou.host).toLowerCase();
+    if (APK_ORIGINS.has(norm)) return next();
+    for (const allowed of (env.CORS_ORIGINS || [])) {
+      if (norm === String(allowed).trim().replace(/\/+$/, '').toLowerCase()) return next();
+    }
+  } catch {}
+  log.warn({ origin, selfHost, path: req.path }, 'origin_guard_rejected');
+  return res.status(403).json({ error: 'bad_origin' });
+});
+
 // CORS — strict origin allow-list + auto-allow same-origin.
 // Same-origin requests happen when the frontend is served from the same
 // host as the API (unified deploy on Railway/Render), which is our default.
@@ -498,6 +531,14 @@ export async function boot() {
   const server = app.listen(env.PORT, () => {
     log.info({ port: env.PORT, env: env.NODE_ENV }, 'server_listening');
   });
+  // Slowloris hardening: drop connections that take too long to send
+  // their full request or keep a socket idle. Defaults in Node 20 are
+  // generous (5 minutes headers, no requestTimeout) which is fine for
+  // a LAN but a bad choice for a public API.
+  server.headersTimeout    = 20_000;  // full request headers must arrive within 20s
+  server.requestTimeout    = 30_000;  // full request body must arrive within 30s
+  server.keepAliveTimeout  = 10_000;  // idle keep-alive sockets closed after 10s
+  server.timeout           = 0;        // disable the legacy socket timeout (superseded by requestTimeout)
 
   const shutdown = async (signal) => {
     log.info({ signal }, 'shutdown_start');

@@ -11,6 +11,7 @@ import {
 } from '../utils/tokens.js';
 import { verifyToken as verifyTotp, hashBackupCode } from '../utils/totp.js';
 import { loginLimiter, loginBurstLimiter, forgotLimiter } from '../middleware/rateLimit.js';
+import { enforceIpGuard, recordIpFailure, clearIpFailures } from '../middleware/ipGuard.js';
 import { verifyCaptcha } from '../middleware/captcha.js';
 import { validate, loginBody } from '../middleware/validate.js';
 import { rotateCsrfCookie } from '../middleware/csrf.js';
@@ -34,7 +35,7 @@ const refreshCookieOpts = () => ({
 
 const GENERIC_LOGIN_FAIL = { error: 'invalid_credentials' };
 
-authRouter.post('/login', loginBurstLimiter, loginLimiter, verifyCaptcha, validate(loginBody), async (req, res) => {
+authRouter.post('/login', enforceIpGuard, loginBurstLimiter, loginLimiter, verifyCaptcha, validate(loginBody), async (req, res) => {
   const { loginId, password, totpCode, backupCode } = req.body;
   const ipHash = hashIp(req.ip);
   const ua = safeText(req.get('user-agent') || '', 200);
@@ -44,6 +45,7 @@ authRouter.post('/login', loginBurstLimiter, loginLimiter, verifyCaptcha, valida
 
   if (!user) {
     await User.verifyDummy(password);
+    await recordIpFailure(req, 'login_unknown');
     await AuditLog.create({ actorEmail: loginId, action: 'login_unknown', outcome: 'failure', ipHash, userAgent: ua });
     return res.status(401).json(GENERIC_LOGIN_FAIL);
   }
@@ -53,7 +55,10 @@ authRouter.post('/login', loginBurstLimiter, loginLimiter, verifyCaptcha, valida
   const ok = await user.verifyPassword(password);
 
   if (inactive || locked || !ok) {
-    if (!inactive && !locked && !ok) await User.atomicRecordFail(user._id);
+    if (!inactive && !locked && !ok) {
+      await User.atomicRecordFail(user._id);
+      await recordIpFailure(req, 'login_fail');
+    }
     await AuditLog.create({
       actorId: user._id, actorEmail: user.loginId,
       action: inactive ? 'login_disabled' : locked ? 'login_locked' : 'login_fail',
@@ -96,6 +101,7 @@ authRouter.post('/login', loginBurstLimiter, loginLimiter, verifyCaptcha, valida
     }
     if (!totpOk) {
       await User.atomicRecordFail(user._id);
+      await recordIpFailure(req, 'totp_fail');
       await AuditLog.create({
         actorId: user._id, actorEmail: user.loginId,
         action: 'login_totp_fail', outcome: 'failure', ipHash, userAgent: ua,
@@ -105,6 +111,7 @@ authRouter.post('/login', loginBurstLimiter, loginLimiter, verifyCaptcha, valida
   }
 
   const fresh = await User.atomicRecordSuccess(user._id, req.ip, false);
+  await clearIpFailures(req);
   const accessToken = signAccess(fresh);
   const { token: refresh } = await issueRefresh(fresh, { ip: req.ip, userAgent: ua });
 
@@ -167,7 +174,7 @@ const forgotBody = z.object({
   loginId: z.string().min(3).max(64).transform(s => s.toLowerCase().trim()),
 });
 
-authRouter.post('/forgot-password', forgotLimiter, verifyCaptcha, async (req, res) => {
+authRouter.post('/forgot-password', enforceIpGuard, forgotLimiter, verifyCaptcha, async (req, res) => {
   // Signal email availability via header so UI can show an informational
   // message. This does NOT leak whether the account exists.
   if (!env.SMTP_HOST) res.set('X-Email-Available', '0');
@@ -208,7 +215,7 @@ const resetBody = z.object({
   newPassword: z.string().min(12).max(200),
 });
 
-authRouter.post('/reset-password', forgotLimiter, async (req, res) => {
+authRouter.post('/reset-password', enforceIpGuard, forgotLimiter, async (req, res) => {
   const parsed = resetBody.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: 'invalid_input' });
   const { token, newPassword } = parsed.data;
