@@ -460,8 +460,20 @@ app.use(express.static(STATIC_ROOT, {
 }));
 
 // SPA fallback: any non-API path with no file match → index.html
+// BUT never fall back for asset-looking requests (.jsx, .js, .css, images,
+// fonts, manifest, sw.js). Those must either be served as real files or
+// return 404. A stale Service Worker from an earlier deploy (before
+// <base href="/"> landed) caches an index.html whose relative <script
+// src="security.jsx"> resolves against /install/<token>/security.jsx —
+// without this guard, SPA fallback returned index.html for that path
+// with content-type text/html, Babel tried to parse HTML as JSX, and
+// the page stayed blank. 404 forces a real error in the browser so the
+// problem surfaces (and the fallback watchdog in index.html can react).
+const ASSET_EXT_RE = /\.(jsx|js|mjs|cjs|css|png|jpg|jpeg|webp|gif|svg|ico|woff2?|ttf|otf|map|webmanifest)$/i;
 app.get('*', (req, res, next) => {
   if (req.path.startsWith('/api/')) return next();
+  if (ASSET_EXT_RE.test(req.path)) return res.status(404).json({ error: 'not_found' });
+  if (req.path === '/sw.js')        return res.status(404).json({ error: 'not_found' });
   res.sendFile(path.join(STATIC_ROOT, 'index.html'));
 });
 
