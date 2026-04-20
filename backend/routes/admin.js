@@ -569,6 +569,21 @@ function ghConfigured() {
   return !!(env.GITHUB_OWNER && env.GITHUB_REPO && env.GITHUB_TOKEN);
 }
 
+// Resolve the public backend origin as the browser sees it, honouring
+// Railway/Fly proxies. We bake THIS URL into the APK so the Capacitor
+// WebView (origin https://localhost) can reach /api/config on the real
+// backend instead of falling back to DEFAULT_STATE ("ตัวอย่างแอป",
+// "ปุ่มที่ 1-6" etc.). Duplicated from routes/public.js — small helper,
+// avoiding a cross-module import.
+function backendOriginOf(req) {
+  const fwdHost  = (req.get('x-forwarded-host')  || '').split(',')[0].trim();
+  const fwdProto = (req.get('x-forwarded-proto') || '').split(',')[0].trim();
+  const host  = fwdHost  || req.get('host') || '';
+  const proto = fwdProto || (req.secure ? 'https' : 'http');
+  if (!host) return '';
+  return proto + '://' + host;
+}
+
 async function ghFetch(path, init = {}) {
   const url = 'https://api.github.com' + path;
   return fetch(url, {
@@ -633,11 +648,20 @@ adminRouter.post('/build-apk', adminWriteLimiter, requireRole('admin'), async (r
     }
   } catch {}
 
+  // Pass the backend's own public origin as the api_base workflow input.
+  // Without this, prepare-web.js ships an APK with window.API_BASE empty,
+  // the Capacitor WebView hits https://localhost/api/config, fetch fails,
+  // and the user sees DEFAULT_STATE demo data instead of the admin-edited
+  // config. No repo secret needed — we detect the real origin per-request.
+  const apiBase = backendOriginOf(req);
   try {
     const dispatchRes = await ghFetch(`/repos/${env.GITHUB_OWNER}/${env.GITHUB_REPO}/actions/workflows/${WORKFLOW_FILE}/dispatches`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ref: 'main', inputs: {} }),
+      body: JSON.stringify({
+        ref: 'main',
+        inputs: apiBase ? { api_base: apiBase } : {},
+      }),
     });
     if (!dispatchRes.ok) {
       const body = await dispatchRes.text().catch(() => '');
