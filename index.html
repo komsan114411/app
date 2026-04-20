@@ -32,8 +32,13 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="MyApp">
 <link rel="manifest" href="manifest.webmanifest">
-<link rel="icon" href="icon-192.png" id="__favicon">
-<link rel="apple-touch-icon" href="icon-192.png" id="__appletouchicon">
+<!--
+  icon.svg is the canonical app icon (there are no PNG variants shipped).
+  useDocumentIdentity() will swap the href to the admin-uploaded appIcon
+  URL at runtime once /api/config resolves.
+-->
+<link rel="icon" type="image/svg+xml" href="icon.svg" id="__favicon">
+<link rel="apple-touch-icon" href="icon.svg" id="__appletouchicon">
 
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -858,7 +863,7 @@ function useDocumentIdentity(appName, appIcon) {
     if (appName) document.title = appName;
     const fav = document.getElementById('__favicon');
     const ati = document.getElementById('__appletouchicon');
-    const raw = appIcon || 'icon-192.png';
+    const raw = appIcon || 'icon.svg';
     const src = (typeof absolutizeMedia === 'function') ? absolutizeMedia(raw) : raw;
     if (fav && fav.getAttribute('href') !== src) fav.setAttribute('href', src);
     if (ati && ati.getAttribute('href') !== src) ati.setAttribute('href', src);

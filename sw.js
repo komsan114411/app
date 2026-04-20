@@ -1,6 +1,6 @@
 // sw.js — Service worker: offline shell + stale-while-revalidate + web push.
 
-const VERSION = 'v27';
+const VERSION = 'v28';
 const SHELL = 'shell-' + VERSION;
 
 const SHELL_FILES = [
@@ -32,6 +32,7 @@ const SHELL_FILES = [
   './saved-indicator.jsx',
   './online-indicator.jsx',
   './manifest.webmanifest',
+  './icon.svg',
 ];
 
 self.addEventListener('install', (event) => {
@@ -103,8 +104,8 @@ self.addEventListener('push', (event) => {
   const title = data.title || 'แอป';
   const options = {
     body: data.body || '',
-    icon: 'icon-192.png',
-    badge: 'icon-192.png',
+    icon: 'icon.svg',
+    badge: 'icon.svg',
     data: { url: data.url || '/' },
   };
   event.waitUntil(self.registration.showNotification(title, options));

@@ -228,6 +228,31 @@ app.use(ensureCsrfCookie);
 app.get('/healthz', (req, res) => res.json({ ok: true, t: Date.now() }));
 app.get('/readyz',  (req, res) => res.json({ ok: true }));
 
+// Browsers auto-request /favicon.ico even with <link rel="icon" href="...">.
+// We don't ship a .ico raster; redirect to the SVG so the tab icon works
+// without hitting the SPA fallback (which would serve HTML with
+// content-type:text/html and break the favicon silently).
+app.get('/favicon.ico', (req, res) => res.redirect(301, '/icon.svg'));
+
+// Explicit robots.txt — disallows admin + install token URLs from crawl
+// and the API surface. Without this, the SPA fallback would serve
+// index.html as text/html and crawlers treat the whole site as
+// indexable (including accidentally-shared /install/:token URLs).
+app.get('/robots.txt', (req, res) => {
+  res.type('text/plain').send([
+    'User-agent: *',
+    'Disallow: /admin',
+    'Disallow: /admin/',
+    'Disallow: /install/',
+    'Disallow: /download/',
+    'Disallow: /api/',
+    'Disallow: /media/',
+    'Disallow: /uploads/',
+    'Allow: /',
+    '',
+  ].join('\n'));
+});
+
 // ── API routes (must come BEFORE static so /api/* is never treated as a file) ─
 app.use('/api',           publicRouter);
 app.use('/api/auth',      authRouter);

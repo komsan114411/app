@@ -31,7 +31,11 @@ for (const f of FILES) {
   if (!fs.existsSync(src)) { console.warn('skip missing', f); continue; }
   fs.cpSync(src, path.join(www, f));
 }
-for (const p of ['icon-192.png', 'icon-512.png', 'icon-maskable-512.png']) {
+// Icon assets. Only icon.svg ships; the manifest references it with
+// sizes="any" so Android and iOS PWA install both accept it. No PNG
+// rasters are generated in-repo, so listing them would just produce
+// skip-missing warnings on every build.
+for (const p of ['icon.svg']) {
   const src = path.join(root, p);
   if (fs.existsSync(src)) fs.cpSync(src, path.join(www, p));
 }
