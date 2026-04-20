@@ -1,6 +1,6 @@
 // sw.js — Service worker: offline shell + stale-while-revalidate + web push.
 
-const VERSION = 'v33';
+const VERSION = 'v34';
 const SHELL = 'shell-' + VERSION;
 
 const SHELL_FILES = [

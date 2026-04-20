@@ -74,3 +74,32 @@ export function isApkBuffer(buf) {
   if (!Buffer.isBuffer(buf) || buf.length < 4) return false;
   return buf[0] === 0x50 && buf[1] === 0x4B && buf[2] === 0x03 && buf[3] === 0x04;
 }
+
+// Verify image magic bytes match the declared MIME type. multer's filter
+// only checks the MIME header (client-supplied). A compromised admin
+// credential could otherwise upload an HTML file with MIME=image/png;
+// the server would store it and later serve it back as image/png. Nosniff
+// + CSP already prevent direct exploitation, but defence-in-depth:
+// actually look at the bytes and reject mismatches.
+export function isImageBuffer(buf, mime) {
+  if (!Buffer.isBuffer(buf) || buf.length < 12) return false;
+  switch (mime) {
+    case 'image/jpeg':
+      // JPEG: FF D8 FF ...  (trailing EE/E0/DB varies)
+      return buf[0] === 0xFF && buf[1] === 0xD8 && buf[2] === 0xFF;
+    case 'image/png':
+      // PNG: 89 50 4E 47 0D 0A 1A 0A
+      return buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4E && buf[3] === 0x47
+          && buf[4] === 0x0D && buf[5] === 0x0A && buf[6] === 0x1A && buf[7] === 0x0A;
+    case 'image/webp':
+      // RIFF....WEBP
+      return buf.slice(0, 4).toString('ascii') === 'RIFF'
+          && buf.slice(8, 12).toString('ascii') === 'WEBP';
+    case 'image/gif':
+      // GIF87a or GIF89a
+      return buf.slice(0, 6).toString('ascii') === 'GIF87a'
+          || buf.slice(0, 6).toString('ascii') === 'GIF89a';
+    default:
+      return false;
+  }
+}

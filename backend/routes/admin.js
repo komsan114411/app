@@ -14,7 +14,7 @@ import { requireAuth, requireRole } from '../middleware/auth.js';
 import { verifyCsrf } from '../middleware/csrf.js';
 import { adminWriteLimiter, uploadLimiter } from '../middleware/rateLimit.js';
 import { validate, configBody, createUserBody } from '../middleware/validate.js';
-import { uploadSingle, uploadApk, isApkBuffer, MIME_TO_EXT, APK_MIME } from '../middleware/upload.js';
+import { uploadSingle, uploadApk, isApkBuffer, isImageBuffer, MIME_TO_EXT, APK_MIME } from '../middleware/upload.js';
 import { MediaAsset } from '../models/MediaAsset.js';
 import { sanitizeConfig, hashIp, safeText, safeUrl } from '../utils/sanitize.js';
 import { revokeAllForUser, revokeOne } from '../utils/tokens.js';
@@ -361,6 +361,12 @@ adminRouter.post('/upload/banner', uploadLimiter, requireRole('admin', 'editor')
     return res.status(400).json({ error: 'upload_failed' });
   }
   if (!req.file) return res.status(400).json({ error: 'no_file' });
+
+  // Server-side magic-byte verification. multer only checked the
+  // client-supplied MIME header; an attacker could lie about it.
+  if (!isImageBuffer(req.file.buffer, req.file.mimetype)) {
+    return res.status(415).json({ error: 'not_an_image' });
+  }
 
   const ext = MIME_TO_EXT[req.file.mimetype] || '.img';
   const id = crypto.randomBytes(12).toString('hex') + ext;
