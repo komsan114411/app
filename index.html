@@ -211,7 +211,23 @@
         crossorigin="anonymous"></script>
 </head>
 <body>
-<div id="root"></div>
+<!--
+  Fallback content inside #root. React replaces it when the Root
+  component mounts. If Babel fails to compile any .jsx, React never
+  mounts, and without this fallback the user sees a truly blank page
+  with no hint what went wrong. With the fallback they see a loading
+  pulse; the boot-watchdog below escalates to an error panel if the
+  mount never happens within 8 s (stale SW cache, network failure,
+  regex-incompatible browser, etc.).
+-->
+<div id="root">
+  <div id="__boot_fallback" style="min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#1F1B17;color:#fff;font-family:system-ui,-apple-system;gap:18px;">
+    <div style="width:64px;height:64px;border-radius:18px;background:rgba(255,255,255,0.08);animation:__bpulse 1.4s ease-in-out infinite;"></div>
+    <div style="font-size:13px;opacity:0.65;letter-spacing:1.2px;text-transform:uppercase;">กำลังโหลด…</div>
+    <div id="__boot_err" style="display:none;max-width:440px;padding:16px 20px;border-radius:12px;background:rgba(255,255,255,0.08);color:#FBBF7B;font-size:12px;line-height:1.6;text-align:center;"></div>
+  </div>
+</div>
+<style>@keyframes __bpulse{0%,100%{opacity:0.6;transform:scale(1)}50%{opacity:1;transform:scale(1.08)}}</style>
 <noscript>
   <div style="padding: 40px; text-align: center; font-family: system-ui;">
     แอปนี้ต้องใช้ JavaScript · กรุณาเปิด JavaScript ในเบราว์เซอร์
@@ -232,6 +248,25 @@ if ('serviceWorker' in navigator && location.protocol !== 'file:') {
     navigator.serviceWorker.register('./sw.js').catch(() => {});
   });
 }
+
+// Boot watchdog: after 8 s, if React hasn't replaced #__boot_fallback,
+// surface an error panel with enough diagnostic info for the user to
+// fix their cache / SW. Prevents the "blank page, no clue why"
+// experience when a stale cache serves a broken script bundle.
+window.addEventListener('DOMContentLoaded', () => {
+  setTimeout(() => {
+    const fb = document.getElementById('__boot_fallback');
+    const err = document.getElementById('__boot_err');
+    if (!fb || !err) return;   // React mounted and replaced them
+    err.style.display = 'block';
+    err.innerHTML =
+      '<strong>โหลดไม่สำเร็จ</strong><br>' +
+      'แอปมาทางนี้มาแล้ว 8 วินาทีแต่ยังไม่ render ได้<br><br>' +
+      'วิธีแก้: เปิด DevTools → Application → Service Workers → Unregister ' +
+      'แล้ว Storage → Clear site data แล้ว Ctrl+Shift+R<br><br>' +
+      'หรือลองเปิดใน Incognito window';
+  }, 8000);
+});
 </script>
 
 <script type="text/babel" src="security.jsx"></script>
