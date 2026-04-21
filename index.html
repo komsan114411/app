@@ -295,13 +295,181 @@
     50%      { opacity: 0.9;  }
   }
 
+  /* ── Sci-fi layer 2: orbital particles, scan, HUD, comets, ticker ───
+     Added on top of the Aurora base to make the splash feel actively
+     alive — everything below either ORBITS, SWEEPS, or RUNS across
+     the screen rather than just pulsing in place. */
+
+  /* Wrapper around the icon that holds the orbit rings. Sized large
+     enough for the outermost orbit (320×260) and centered on the
+     icon ring via flex. */
+  .splash-icon-wrap {
+    position: relative;
+    display: flex; align-items: center; justify-content: center;
+    width: min(92vw, 340px);
+    height: min(55vh, 280px);
+  }
+
+  /* Three concentric orbit rings with a bright particle each.
+     Different speeds + directions so the motion reads as three
+     independent bodies, not one turntable. */
+  .splash-orbit {
+    position: absolute; left: 50%; top: 50%;
+    border: 1px dashed rgba(255,255,255,0.07);
+    border-radius: 50%;
+    pointer-events: none;
+  }
+  .splash-orbit::after {
+    content: ''; position: absolute; top: -4px; left: 50%;
+    width: 8px; height: 8px; border-radius: 50%;
+    background: #FFF;
+    box-shadow:
+      0 0 16px 3px currentColor,
+      0 0 6px rgba(255,255,255,0.95);
+    transform: translateX(-50%);
+  }
+  .splash-orbit-1 {
+    width: 170px; height: 170px; color: #C48B3E;
+    animation: orbitRot 6s linear infinite;
+  }
+  .splash-orbit-2 {
+    width: 230px; height: 230px; color: oklch(0.65 0.18 245);
+    animation: orbitRot 9.2s linear infinite reverse;
+  }
+  .splash-orbit-3 {
+    width: 310px; height: 260px; color: #B4463A;
+    animation: orbitRot 13s linear infinite;
+  }
+  @keyframes orbitRot {
+    from { transform: translate(-50%, -50%) rotate(0deg);   }
+    to   { transform: translate(-50%, -50%) rotate(360deg); }
+  }
+
+  /* HUD corner brackets — the 4 L-shaped markers frame the whole
+     viewport like a targeting reticle. Each has a blinking LED dot. */
+  .splash-hud {
+    position: absolute; width: 26px; height: 26px;
+    border: 1.5px solid rgba(196,139,62,0.55);
+    pointer-events: none; z-index: 3;
+  }
+  .splash-hud::after {
+    content: ''; position: absolute;
+    width: 6px; height: 6px; border-radius: 50%;
+    background: #C48B3E;
+    box-shadow: 0 0 8px #C48B3E;
+    animation: hudBlink 1.8s ease-in-out infinite;
+  }
+  .splash-hud-tl { top: 20px; left: 20px;    border-right:  none; border-bottom: none; }
+  .splash-hud-tr { top: 20px; right: 20px;   border-left:   none; border-bottom: none; }
+  .splash-hud-bl { bottom: 20px; left: 20px; border-right:  none; border-top:    none; }
+  .splash-hud-br { bottom: 20px; right: 20px;border-left:   none; border-top:    none; }
+  .splash-hud-tl::after { top: -3px; left: -3px; }
+  .splash-hud-tr::after { top: -3px; right: -3px; animation-delay: 0.45s; }
+  .splash-hud-bl::after { bottom: -3px; left: -3px; animation-delay: 0.9s; }
+  .splash-hud-br::after { bottom: -3px; right: -3px; animation-delay: 1.35s; }
+  @keyframes hudBlink {
+    0%, 100% { opacity: 1;   }
+    50%      { opacity: 0.2; }
+  }
+
+  /* Vertical scan line sweeping top → bottom every 4.5 s.
+     Thin, bright, with a warm glow — reads as a holographic scanner. */
+  .splash-scan {
+    position: absolute; left: 0; right: 0; top: 0;
+    height: 2px; pointer-events: none; z-index: 3;
+    background: linear-gradient(90deg,
+      transparent 0%,
+      rgba(196,139,62,0.9) 50%,
+      transparent 100%);
+    box-shadow: 0 0 20px rgba(196,139,62,0.7);
+    animation: scanSweep 4.5s cubic-bezier(0.45, 0.05, 0.55, 0.95) infinite;
+  }
+  @keyframes scanSweep {
+    0%   { transform: translateY(-6px);   opacity: 0;   }
+    8%   { opacity: 0.9; }
+    92%  { opacity: 0.9; }
+    100% { transform: translateY(100vh);  opacity: 0;   }
+  }
+
+  /* Two faint comets flying across the background on diverging paths.
+     The ::before pseudo draws the trailing streak. */
+  .splash-comet {
+    position: absolute; width: 2px; height: 2px; border-radius: 50%;
+    background: #FFF; pointer-events: none; z-index: 1;
+    box-shadow: 0 0 6px 1px rgba(196,139,62,0.9);
+  }
+  .splash-comet::before {
+    content: ''; position: absolute; right: 3px; top: 50%;
+    width: 70px; height: 1px;
+    background: linear-gradient(90deg,
+      transparent 0%, rgba(196,139,62,0.8) 85%, #FFF 100%);
+    transform: translateY(-50%);
+  }
+  .splash-comet-1 { animation: cometA 7s linear infinite; }
+  .splash-comet-2 { animation: cometB 10.5s linear 2.4s infinite; }
+  @keyframes cometA {
+    0%   { top: 18%; left: -12%; opacity: 0;   }
+    6%   { opacity: 1; }
+    90%  { opacity: 0.85; }
+    100% { top: 35%; left: 112%; opacity: 0;   }
+  }
+  @keyframes cometB {
+    0%   { top: 72%; left: 112%; transform: scaleX(-1); opacity: 0;   }
+    6%   { opacity: 1; }
+    90%  { opacity: 0.85; }
+    100% { top: 55%; left: -12%; transform: scaleX(-1); opacity: 0;   }
+  }
+
+  /* Running ticker — system-status strings scrolling right-to-left
+     in a monospace line at the bottom. Duplicates its content so the
+     translateX(-50%) loop is seamless. */
+  .splash-ticker {
+    position: absolute; bottom: 26px; left: 0; right: 0;
+    height: 14px; overflow: hidden; pointer-events: none; z-index: 3;
+    mask-image: linear-gradient(90deg, transparent, #000 12%, #000 88%, transparent);
+    -webkit-mask-image: linear-gradient(90deg, transparent, #000 12%, #000 88%, transparent);
+  }
+  .splash-ticker-track {
+    display: inline-block; white-space: nowrap;
+    font-family: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Consolas, monospace;
+    font-size: 10px; letter-spacing: 1.8px;
+    color: rgba(196,139,62,0.75);
+    animation: tickerRun 24s linear infinite;
+    line-height: 14px;
+  }
+  .splash-ticker-track > span { margin: 0 22px; }
+  .splash-ticker-track .dot { color: rgba(255,255,255,0.22); margin: 0 4px; }
+  @keyframes tickerRun {
+    from { transform: translateX(0);    }
+    to   { transform: translateX(-50%); }
+  }
+
+  /* Chromatic-aberration glitch flash on the app name every ~5 s.
+     Three rapid offset flips then back to neutral → reads as a
+     millisecond signal glitch, not a breakage. */
+  .splash-name {
+    animation:
+      nameGlitch 5.5s steps(1, end) infinite;
+  }
+  @keyframes nameGlitch {
+    0%, 89%, 100% {
+      text-shadow: 0 2px 20px rgba(196,139,62,0.3);
+      transform: translateX(0);
+    }
+    90% { text-shadow:  2px 0 0 #B4463A, -2px 0 0 oklch(0.65 0.18 245); transform: translateX(1px);  }
+    93% { text-shadow: -2px 0 0 #B4463A,  2px 0 0 oklch(0.65 0.18 245); transform: translateX(-1px); }
+    96% { text-shadow:  1px 0 0 #B4463A, -1px 0 0 oklch(0.65 0.18 245); transform: translateX(0);    }
+  }
+
   /* Respect users who opt out of motion — kill everything that moves. */
   @media (prefers-reduced-motion: reduce) {
     .splash-orb, .splash-grid,
     .splash-icon-ring, .splash-icon,
     .splash-icon-ring::before, .splash-icon-ring::after,
     .splash-icon::after, .splash-progress-fill,
-    .splash-name span, .splash-hint {
+    .splash-name, .splash-name span, .splash-hint,
+    .splash-orbit, .splash-scan, .splash-hud, .splash-hud::after,
+    .splash-comet, .splash-ticker-track {
       animation-duration: 0.01ms !important;
       animation-iteration-count: 1 !important;
       transform: none !important;
@@ -1029,31 +1197,69 @@ function UserOnlyPage() {
   );
 }
 
-// Premium splash — only shown on the FIRST-EVER app open on a device
-// (public_cache_v1 empty). Layers: drifting aurora orbs, blueprint
-// dot grid, rotating conic gradient ring around the icon tile, shine
-// sweep across the glyph, dual halo rings, staggered letter reveal
-// for the app name, indeterminate progress sweep, and a pulsing hint.
-// Swaps to UserApp when hydrated, so the show runs for exactly as
-// long as the backend fetch takes (usually 200-600ms) — every
-// animation is loopable so it looks intentional at any duration.
+// Premium splash — sci-fi composition shown on the first-ever app
+// open (public_cache_v1 empty). Stacked layers, painted back-to-front:
+//
+//   1. Aurora orbs     — 3 drifting radial blurs
+//   2. Dot-grid        — subtle "blueprint" texture
+//   3. Comets          — 2 faint streaks crossing the background
+//   4. Orbital bodies  — 3 particles running around the icon at
+//                        different speeds/directions
+//   5. Icon assembly   — rotating conic ring, counter-rotating glyph,
+//                        shine sweep, dual halos
+//   6. App name        — letter-by-letter reveal with periodic glitch
+//   7. Progress        — indeterminate gradient sweep
+//   8. HUD brackets    — 4 corner targeting markers with blinking LEDs
+//   9. Scan sweep      — horizontal bright line traversing the frame
+//  10. Ticker          — monospace system-status strings scrolling
+//
+// All keyframes use transform/opacity only → GPU-compositable.
+// prefers-reduced-motion kills every loop for accessibility.
 function FirstLaunchSplash({ appName, appIcon }) {
   const name = String(appName || 'HOF88').trim().slice(0, 24) || 'HOF88';
   const letter = (name.slice(0, 1) || 'A').toUpperCase();
   const iconSrc = (appIcon && typeof absolutizeMedia === 'function') ? absolutizeMedia(appIcon) : appIcon;
   const chars = Array.from(name);
+  // Ticker strings — looped twice so the translateX(-50%) animation
+  // seams perfectly at the midpoint. Monospaced status beacons evoke
+  // the boot console of a sci-fi OS without reading as fake/cringy.
+  const tickerItems = [
+    'SYS.READY', 'AUTH.OK', 'NET.STABLE', 'SYNC.0.3s',
+    'RENDER.60FPS', 'CACHE.FRESH', 'GPU.COMPOSITE', 'ENTROPY.HIGH',
+  ];
+  const renderTicker = () => tickerItems.flatMap((s, i) => [
+    <span key={`s${i}`}>{s}</span>,
+    <span key={`d${i}`} className="dot">▪</span>,
+  ]);
   return (
     <div className="splash-root">
+      {/* Background layers */}
       <div className="splash-orb splash-orb-a"/>
       <div className="splash-orb splash-orb-b"/>
       <div className="splash-orb splash-orb-c"/>
       <div className="splash-grid"/>
+      <div className="splash-comet splash-comet-1"/>
+      <div className="splash-comet splash-comet-2"/>
+
+      {/* Viewport HUD */}
+      <div className="splash-hud splash-hud-tl"/>
+      <div className="splash-hud splash-hud-tr"/>
+      <div className="splash-hud splash-hud-bl"/>
+      <div className="splash-hud splash-hud-br"/>
+      <div className="splash-scan"/>
+
+      {/* Central stack */}
       <div className="splash-stack">
-        <div className="splash-icon-ring">
-          <div className="splash-icon">
-            {iconSrc
-              ? <img src={iconSrc} alt=""/>
-              : letter}
+        <div className="splash-icon-wrap">
+          <div className="splash-orbit splash-orbit-1"/>
+          <div className="splash-orbit splash-orbit-2"/>
+          <div className="splash-orbit splash-orbit-3"/>
+          <div className="splash-icon-ring">
+            <div className="splash-icon">
+              {iconSrc
+                ? <img src={iconSrc} alt=""/>
+                : letter}
+            </div>
           </div>
         </div>
         <div className="splash-name" aria-label={name}>
@@ -1066,7 +1272,14 @@ function FirstLaunchSplash({ appName, appIcon }) {
         <div className="splash-progress">
           <div className="splash-progress-fill"/>
         </div>
-        <div className="splash-hint">กำลังโหลด</div>
+      </div>
+
+      {/* Running system-status ticker */}
+      <div className="splash-ticker">
+        <div className="splash-ticker-track">
+          {renderTicker()}
+          {renderTicker()}
+        </div>
       </div>
     </div>
   );
