@@ -48,8 +48,20 @@ function PushSubscribeButton({ theme }) {
     setError(null);
     setState('busy');
     try {
+      // Permission — Android 13+ WebView dialog is silently suppressed
+      // if POST_NOTIFICATIONS isn't declared in AndroidManifest (fixed
+      // in apply-hardening.js). If this returns 'default' on a phone,
+      // the manifest permission is missing → user must reinstall a
+      // rebuilt APK.
       const perm = await Notification.requestPermission();
-      if (perm !== 'granted') { setState(perm === 'denied' ? 'denied' : 'idle'); return; }
+      if (perm !== 'granted') {
+        if (perm === 'default') {
+          // Silent suppression — no "Allow/Deny" dialog ever appeared.
+          setError('permission_dialog_suppressed — ตรวจว่า APK เวอร์ชันล่าสุดมี POST_NOTIFICATIONS permission');
+        }
+        setState(perm === 'denied' ? 'denied' : 'idle');
+        return;
+      }
       const { publicKey } = await api.vapidKey();
       if (!publicKey) { setState('unavailable'); return; }
       const reg = await navigator.serviceWorker.ready;
@@ -61,7 +73,17 @@ function PushSubscribeButton({ theme }) {
       await api.subscribePush({ endpoint: json.endpoint, keys: json.keys });
       setState('subscribed');
     } catch (e) {
-      setError(e.message || 'subscribe_failed');
+      // Common failure classes to surface distinctly so the user can
+      // tell "system blocked me" from "network down" from
+      // "VAPID mismatch":
+      //   NotAllowedError   — permission not granted or OS blocks
+      //   AbortError        — push service unreachable
+      //   InvalidStateError — browser in odd state, often retry works
+      //   TypeError         — applicationServerKey invalid
+      const name = (e && e.name) || '';
+      const msg  = (e && e.message) || 'subscribe_failed';
+      setError(name ? `${name}: ${msg}` : msg);
+      try { console.warn('[push] subscribe failed:', name, msg, e); } catch {}
       setState('idle');
     }
   };

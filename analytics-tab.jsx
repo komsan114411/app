@@ -143,7 +143,11 @@ function CampaignsPanel() {
       if (!r?.targeted) {
         toast.warn('ยังไม่มีผู้ใช้ที่เข้าเกณฑ์ · ตรวจว่ามีคน subscribe push แล้วหรือยัง');
       } else if (!r?.sent) {
-        toast.warn(`ถึง ${r.targeted} ราย แต่ส่งไม่ผ่านเลย · อาจเป็น VAPID เก่า`);
+        const reasons = r?.failReasons ? Object.entries(r.failReasons).map(([k,v]) => `${k}:${v}`).join(' ') : '';
+        toast.warn(`ถึง ${r.targeted} ราย ส่งไม่ผ่านเลย ${reasons ? '· ' + reasons : ''}`);
+      } else if (r.failed) {
+        const reasons = r?.failReasons ? Object.entries(r.failReasons).map(([k,v]) => `${k}:${v}`).join(' ') : '';
+        toast.warn(`สำเร็จ ${r.sent}/${r.targeted} · fail ${r.failed} (${reasons})`);
       } else {
         toast.success(`ส่งสำเร็จ ${r.sent}/${r.targeted} ราย`);
       }

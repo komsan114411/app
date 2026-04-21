@@ -1860,6 +1860,7 @@ adminRouter.post('/push/broadcast', adminWriteLimiter, requireRole('admin'), asy
 
   let sent = 0, failed = 0;
   const staleEndpoints = [];
+  const failReasons = {};  // statusCode -> count, for admin diagnostic
 
   async function sendOne(s) {
     try {
@@ -1870,9 +1871,25 @@ adminRouter.post('/push/broadcast', adminWriteLimiter, requireRole('admin'), asy
       sent++;
     } catch (e) {
       failed++;
-      if (e && (e.statusCode === 404 || e.statusCode === 410)) {
-        staleEndpoints.push(s.endpoint);
+      const sc = e && e.statusCode;
+      failReasons[sc || 'network'] = (failReasons[sc || 'network'] || 0) + 1;
+      // Log the first few failures so the admin can diagnose a bad
+      // VAPID signature (403), oversized payload (413), etc. Previously
+      // every failure was silently dropped and admin just saw a high
+      // `failed` count with no reason.
+      if (failed <= 5) {
+        log.warn({
+          statusCode: sc,
+          err: e?.message?.slice(0, 200),
+          body: (e?.body || '').toString().slice(0, 300),
+          endpointHost: (() => { try { return new URL(s.endpoint).host; } catch { return 'unknown'; } })(),
+        }, 'push_send_failed_sample');
       }
+      // Stale cleanup: FCM 404/410 = gone. Mozilla 403 after token
+      // rotation = also permanently gone. APNs also uses 410. Anything
+      // else (timeout, 5xx, 400 malformed) MIGHT recover, so keep the
+      // sub around.
+      if (sc === 404 || sc === 410 || sc === 403) staleEndpoints.push(s.endpoint);
     }
   }
 
@@ -1890,7 +1907,7 @@ adminRouter.post('/push/broadcast', adminWriteLimiter, requireRole('admin'), asy
     actorId: req.user.id, actorEmail: req.user.loginId,
     action: 'push_broadcast', target: String(sent), outcome: 'success',
     ipHash: hashIp(req.ip), userAgent: safeText(req.get('user-agent') || '', 200),
-    diff: { title: p.data.title, url: safeClickUrl, sent, failed, pruned: staleEndpoints.length, rejected: rejectedEndpoints.length },
+    diff: { title: p.data.title, url: safeClickUrl, sent, failed, pruned: staleEndpoints.length, rejected: rejectedEndpoints.length, failReasons },
   });
   // Consistent with /broadcast-segmented: always write history so the
   // admin's Campaigns panel shows every send, not only the segmented
@@ -1907,7 +1924,7 @@ adminRouter.post('/push/broadcast', adminWriteLimiter, requireRole('admin'), asy
       stats: { targeted: safeSubs.length, sent, failed, pruned: staleEndpoints.length, clicks: 0 },
     });
   } catch (e) { log.warn({ err: e?.message }, 'campaign_history_write_failed'); }
-  res.json({ sent, failed, pruned: staleEndpoints.length, rejected: rejectedEndpoints.length });
+  res.json({ sent, failed, pruned: staleEndpoints.length, rejected: rejectedEndpoints.length, failReasons });
 });
 
 // ─── Phase 3: push segmentation + campaigns ─────────────────
@@ -2038,6 +2055,7 @@ adminRouter.post('/push/broadcast-segmented', adminWriteLimiter, requireRole('ad
     });
     let sent = 0, failed = 0;
     const stale = [];
+    const failReasons = {};
     const sendOne = async (s) => {
       try {
         await withTimeout(
@@ -2047,7 +2065,17 @@ adminRouter.post('/push/broadcast-segmented', adminWriteLimiter, requireRole('ad
         sent++;
       } catch (e) {
         failed++;
-        if (e && (e.statusCode === 404 || e.statusCode === 410)) stale.push(s.endpoint);
+        const sc = e && e.statusCode;
+        failReasons[sc || 'network'] = (failReasons[sc || 'network'] || 0) + 1;
+        if (failed <= 5) {
+          log.warn({
+            statusCode: sc,
+            err: e?.message?.slice(0, 200),
+            body: (e?.body || '').toString().slice(0, 300),
+            endpointHost: (() => { try { return new URL(s.endpoint).host; } catch { return 'unknown'; } })(),
+          }, 'push_segmented_send_failed_sample');
+        }
+        if (sc === 404 || sc === 410 || sc === 403) stale.push(s.endpoint);
       }
     };
     for (let i = 0; i < subs.length; i += PUSH_CONCURRENCY) {
@@ -2064,7 +2092,7 @@ adminRouter.post('/push/broadcast-segmented', adminWriteLimiter, requireRole('ad
       diff: { title, url: safeClickUrl, targeted: ids.length, sent, failed, pruned: stale.length },
     });
     await saveHistory({ targeted: ids.length, sent, failed, pruned: stale.length, clicks: 0 });
-    res.json({ targeted: ids.length, sent, failed, pruned: stale.length });
+    res.json({ targeted: ids.length, sent, failed, pruned: stale.length, failReasons });
   } catch (e) {
     log.warn({ err: e?.message }, 'push_segmented_error');
     res.status(500).json({ error: 'push_error' });

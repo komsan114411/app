@@ -60,6 +60,31 @@ if (fs.existsSync(manifestPath)) {
   if (!xml.includes('xmlns:tools=')) {
     xml = xml.replace('<manifest ', '<manifest xmlns:tools="http://schemas.android.com/tools" ');
   }
+  // POST_NOTIFICATIONS is REQUIRED on Android 13+ (API 33+). Without
+  // it declared here, the runtime permission dialog triggered by
+  // `Notification.requestPermission()` inside the WebView is silently
+  // denied — the user sees a brief "Allow" prompt that seemingly
+  // succeeds, but `Notification.permission` stays `'default'` and
+  // `pushManager.subscribe()` is called anyway → the subscription
+  // endpoint is stored, the backend can send, the browser's push
+  // service accepts the POST, BUT the OS-level permission check
+  // at display time drops every notification on the floor.
+  //
+  // VIBRATE + WAKE_LOCK let the notification vibrate the phone and
+  // wake the screen / WebView when a push arrives in the background.
+  const requiredPerms = [
+    'android.permission.POST_NOTIFICATIONS',
+    'android.permission.VIBRATE',
+    'android.permission.WAKE_LOCK',
+  ];
+  for (const p of requiredPerms) {
+    if (!xml.includes(`android:name="${p}"`)) {
+      xml = xml.replace(
+        '<application',
+        `<uses-permission android:name="${p}"/>\n    <application`,
+      );
+    }
+  }
   // Tools replace list so our attributes override Capacitor's defaults
   const toolsReplace = Object.keys(attrs).join(',');
   if (!xml.includes('tools:replace=')) {

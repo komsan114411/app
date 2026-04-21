@@ -1,6 +1,6 @@
 // sw.js — Service worker: offline shell + stale-while-revalidate + web push.
 
-const VERSION = 'v54';
+const VERSION = 'v55';
 const SHELL = 'shell-' + VERSION;
 
 // Public-surface JSX only. Admin-only bundles (auth-gate, admin-app,
@@ -229,15 +229,47 @@ self.addEventListener('fetch', (event) => {
 });
 
 // ── Web Push ──────────────────────────────────────────────────
+// Two robustness issues were silently eating notifications before:
+//   1. `event.data.json()` throws when the payload isn't pure JSON
+//      (some push services deliver as text or arrayBuffer). The old
+//      catch fell through to `data = {}` so the notification showed
+//      "แอป" with no body — user thought "nothing arrived" when in
+//      fact a notification WAS displayed, just with no content.
+//   2. No `tag` on showNotification — each push stacked a fresh entry
+//      in the tray instead of replacing the previous one.
 self.addEventListener('push', (event) => {
   let data = {};
-  try { data = event.data ? event.data.json() : {}; } catch {}
-  const title = data.title || 'แอป';
+  if (event.data) {
+    // Try JSON first, fall through to text (some push services deliver
+    // text/plain), and finally just pass raw bytes length as a marker.
+    try { data = event.data.json(); }
+    catch (_) {
+      try {
+        const txt = event.data.text();
+        // If the text itself IS JSON, parse it — some servers double-
+        // wrap. Otherwise treat the whole thing as the body.
+        try { data = JSON.parse(txt); }
+        catch { data = { body: txt }; }
+      } catch {}
+    }
+  }
+  // Root-anchored so the icon resolves against origin root, not
+  // whatever scope the push arrived on. Matches the SW's own scope.
+  const title = (data && data.title) || 'แอป';
+  const body  = (data && data.body)  || '';
+  const url   = (data && data.url)   || '/';
   const options = {
-    body: data.body || '',
-    icon: 'icon.svg',
-    badge: 'icon.svg',
-    data: { url: data.url || '/' },
+    body,
+    icon: '/icon.svg',
+    badge: '/icon.svg',
+    // tag lets a subsequent push replace the tray entry instead of
+    // stacking. If admin sends 5 updates, the user sees the latest,
+    // not a pile of notifications.
+    tag: (data && data.tag) || 'hof88-default',
+    renotify: true,
+    vibrate: [100, 50, 100],
+    data: { url },
+    requireInteraction: false,
   };
   event.waitUntil(self.registration.showNotification(title, options));
 });

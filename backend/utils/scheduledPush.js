@@ -92,6 +92,7 @@ async function runOne(campaign) {
 
   let sent = 0, failed = 0;
   const stale = [];
+  const failReasons = {};
   const sendOne = async (s) => {
     try {
       await withTimeout(
@@ -101,7 +102,17 @@ async function runOne(campaign) {
       sent++;
     } catch (e) {
       failed++;
-      if (e && (e.statusCode === 404 || e.statusCode === 410)) stale.push(s.endpoint);
+      const sc = e && e.statusCode;
+      failReasons[sc || 'network'] = (failReasons[sc || 'network'] || 0) + 1;
+      if (failed <= 3) {
+        log.warn({
+          campaignId: String(campaign._id),
+          statusCode: sc,
+          err: e?.message?.slice(0, 200),
+          body: (e?.body || '').toString().slice(0, 300),
+        }, 'scheduled_push_send_failed_sample');
+      }
+      if (sc === 404 || sc === 410 || sc === 403) stale.push(s.endpoint);
     }
   };
   for (let i = 0; i < subs.length; i += CONCURRENCY) {

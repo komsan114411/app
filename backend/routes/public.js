@@ -421,6 +421,8 @@ publicRouter.post('/push/subscribe', publicReadLimiter, async (req, res) => {
   // so legacy rows don't silently keep a missing/mismatched deviceId
   // on re-subscribe — the field is guaranteed to be current.
   const deviceId = validateDeviceId((req.body && req.body.deviceId) || req.get('x-device'));
+  let endpointHost = 'unknown';
+  try { endpointHost = new URL(endpoint).host; } catch {}
   try {
     await PushSubscription.updateOne(
       { endpoint },
@@ -434,6 +436,13 @@ publicRouter.post('/push/subscribe', publicReadLimiter, async (req, res) => {
       },
       { upsert: true },
     );
-  } catch {}
+    // Surface every subscribe in logs so the operator can diagnose
+    // "my phone clicked Enable but no row in PushSubscription" without
+    // direct DB access. Hides the full endpoint (has random token)
+    // and logs only the hostname + deviceId.
+    log.info({ endpointHost, hasDeviceId: !!deviceId }, 'push_subscribe_ok');
+  } catch (e) {
+    log.warn({ err: e?.message, endpointHost }, 'push_subscribe_failed');
+  }
   res.status(204).end();
 });
