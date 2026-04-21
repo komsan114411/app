@@ -91,10 +91,19 @@ async function request(path, { method = 'GET', body, auth = false, retry = true,
 async function tryRefresh() {
   if (refreshInflight) return refreshInflight;
   refreshInflight = (async () => {
+    // Hard 10s timeout — without this, a stalled TCP connection (flaky
+    // Capacitor network layer, upstream proxy drop) leaves refreshInflight
+    // pinned to a never-resolving promise, and every subsequent 401 retry
+    // awaits forever. AbortSignal.timeout is supported on Node 18+ and
+    // modern browsers incl. Android WebView 88+.
+    const ctl = (typeof AbortSignal !== 'undefined' && AbortSignal.timeout)
+      ? AbortSignal.timeout(10_000)
+      : undefined;
     try {
       const r = await fetch(API_BASE + '/api/auth/refresh', {
         method: 'POST', credentials: 'include', cache: 'no-store',
         headers: { 'X-CSRF-Token': readCsrf() || '' },
+        signal: ctl,
       });
       if (!r.ok) return false;
       const data = await r.json();

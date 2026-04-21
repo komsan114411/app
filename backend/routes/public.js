@@ -29,9 +29,17 @@ function opaqueVersion(raw) {
 // URLs in the /config response so the installed APK (WebView origin
 // https://localhost) and the web (same origin) both work without any
 // client-side URL rewriting.
+//
+// TRUST_PROXY gate: only honour X-Forwarded-* when we trust the upstream
+// proxy. With TRUST_PROXY=0 (direct exposure) an attacker crafting
+// X-Forwarded-Host: evil.com could poison cached /config payloads with
+// imageUrl/appIcon/downloadLinks pointing to their own domain. The Vary
+// header already segregates cache entries by origin, but gating here
+// keeps the absolutized URLs honest to our actual host.
 function publicOriginOf(req) {
-  const fwdHost = (req.get('x-forwarded-host') || '').split(',')[0].trim();
-  const fwdProto = (req.get('x-forwarded-proto') || '').split(',')[0].trim();
+  const trusted = env.TRUST_PROXY > 0;
+  const fwdHost = trusted ? (req.get('x-forwarded-host') || '').split(',')[0].trim() : '';
+  const fwdProto = trusted ? (req.get('x-forwarded-proto') || '').split(',')[0].trim() : '';
   const host = fwdHost || req.get('host') || 'localhost';
   const proto = fwdProto || (req.secure ? 'https' : 'http');
   return proto + '://' + host;

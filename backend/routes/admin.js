@@ -573,11 +573,18 @@ function ghConfigured() {
 // Railway/Fly proxies. We bake THIS URL into the APK so the Capacitor
 // WebView (origin https://localhost) can reach /api/config on the real
 // backend instead of falling back to DEFAULT_STATE ("ตัวอย่างแอป",
-// "ปุ่มที่ 1-6" etc.). Duplicated from routes/public.js — small helper,
-// avoiding a cross-module import.
+// "ปุ่มที่ 1-6" etc.).
+//
+// TRUST_PROXY gate: only honour X-Forwarded-* when we actually trust
+// the upstream proxy that set the header. With TRUST_PROXY=0 (direct
+// exposure) an attacker-in-the-middle could craft X-Forwarded-Host:
+// evil.com and this endpoint would bake evil.com into the APK that
+// users install — persistent phishing. Mirrors the gate in
+// server.js:195 and the origin-guard middleware.
 function backendOriginOf(req) {
-  const fwdHost  = (req.get('x-forwarded-host')  || '').split(',')[0].trim();
-  const fwdProto = (req.get('x-forwarded-proto') || '').split(',')[0].trim();
+  const trusted = env.TRUST_PROXY > 0;
+  const fwdHost  = trusted ? (req.get('x-forwarded-host')  || '').split(',')[0].trim() : '';
+  const fwdProto = trusted ? (req.get('x-forwarded-proto') || '').split(',')[0].trim() : '';
   const host  = fwdHost  || req.get('host') || '';
   const proto = fwdProto || (req.secure ? 'https' : 'http');
   if (!host) return '';
@@ -653,14 +660,26 @@ adminRouter.post('/build-apk', adminWriteLimiter, requireRole('admin'), async (r
   // the Capacitor WebView hits https://localhost/api/config, fetch fails,
   // and the user sees DEFAULT_STATE demo data instead of the admin-edited
   // config. No repo secret needed — we detect the real origin per-request.
+  //
+  // Reject the build if origin detection failed: sending inputs:{} would
+  // fall through to secrets.API_BASE_URL (likely unset) and produce a
+  // silently-broken APK — admin would see "build started" then wonder
+  // why the new APK still shows demo data. Loud failure > silent trap.
   const apiBase = backendOriginOf(req);
+  if (!apiBase) {
+    log.warn({ headers: { host: req.get('host'), xfh: req.get('x-forwarded-host') } }, 'build_apk_origin_detection_failed');
+    return res.status(400).json({
+      error: 'api_base_detection_failed',
+      detail: 'Cannot detect backend origin from request. Check that the proxy forwards X-Forwarded-Host and TRUST_PROXY is configured.',
+    });
+  }
   try {
     const dispatchRes = await ghFetch(`/repos/${env.GITHUB_OWNER}/${env.GITHUB_REPO}/actions/workflows/${WORKFLOW_FILE}/dispatches`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         ref: 'main',
-        inputs: apiBase ? { api_base: apiBase } : {},
+        inputs: { api_base: apiBase },
       }),
     });
     if (!dispatchRes.ok) {

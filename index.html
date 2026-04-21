@@ -938,6 +938,12 @@ try {
     }
   }
   ReactDOM.createRoot(document.getElementById('root')).render(<Root/>);
+  // Lock security primitives AFTER mount so SafeState / SafeText / safeUrl
+  // / allowed enum lists are immutable for the rest of the session. Any
+  // later injected script can't override SafeText.safeUrl to return
+  // attacker-controlled URLs. Must run after all JSX files assigned
+  // their symbols to window.
+  if (typeof freezeSecurityPrimitives === 'function') freezeSecurityPrimitives();
 } catch (e) {
   console.error('[boot] mount aborted:', e && e.message);
   // Do nothing — watchdog inside index.html <head> shows the recovery
