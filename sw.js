@@ -1,6 +1,6 @@
 // sw.js — Service worker: offline shell + stale-while-revalidate + web push.
 
-const VERSION = 'v47';
+const VERSION = 'v48';
 const SHELL = 'shell-' + VERSION;
 
 // Public-surface JSX only. Admin-only bundles (auth-gate, admin-app,
@@ -17,6 +17,7 @@ const SHELL_FILES = [
   './icons.jsx',
   './app-state.jsx',
   './api-client.jsx',
+  './tracking.jsx',
   './toast.jsx',
   './ios-frame.jsx',
   './browser-window.jsx',

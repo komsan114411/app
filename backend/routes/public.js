@@ -5,6 +5,8 @@ import crypto from 'node:crypto';
 import { getAppConfig, publishedButtons } from '../models/AppConfig.js';
 import { ClickEvent } from '../models/ClickEvent.js';
 import { PushSubscription } from '../models/PushSubscription.js';
+import { Device } from '../models/Device.js';
+import { EventLog, EVENT_TYPES } from '../models/EventLog.js';
 import { publicReadLimiter, trackLimiter } from '../middleware/rateLimit.js';
 import { validate, trackBody } from '../middleware/validate.js';
 import { hashIp, safeText } from '../utils/sanitize.js';
@@ -132,6 +134,159 @@ publicRouter.post('/track', trackLimiter, validate(trackBody), async (req, res) 
   res.status(204).end();
 });
 
+// ─── Growth / retention event ingestion ──────────────────────────
+// Accepts a batched event list from the browser / APK. Keeps the
+// old /track endpoint alive for existing button taps but everything
+// new — install funnel, sessions, screen views, errors — flows here.
+//
+// Request shape (JSON):
+//   {
+//     deviceId:    "uuid-v4"           // required, client-generated
+//     sessionId:   "uuid-v4"           // optional but strongly encouraged
+//     appVersion:  "9a4f1e1" or ""     // commit SHA baked into bundle
+//     platform:    "android-apk" | "web-desktop" | …
+//     osVersion:   "13" | "17.2" | ""
+//     deviceModel: "SM-A536E" | ""     // parsed UA hint (optional)
+//     locale:      navigator.language
+//     sourceToken: ""                  // install link token, if any
+//     utmSource / utmCampaign / utmMedium / utmContent : strings
+//     firstSeenMedium: "line-inapp" | …
+//     events: [
+//       { type, target, label, variant, durationMs }, …
+//     ]
+//   }
+//
+// Consent gates:
+//   • DNT: 1       → 204, nothing written
+//   • X-Consent: 0 → 204, nothing written
+//   • Else         → upsert Device (non-destructive — attribution fields
+//                    only fill if currently empty), bulk-insert events.
+//
+// Rate limit: reuse trackLimiter (~1.5 req/sec/IP) — events are batched
+// so one request per 1.5 s is plenty for any real user.
+function validateDeviceId(raw) {
+  const s = String(raw || '').slice(0, 40);
+  // Accept UUIDv4-ish or any 8-40 char slug we issue ourselves.
+  return /^[A-Za-z0-9_-]{8,40}$/.test(s) ? s : '';
+}
+
+publicRouter.post('/track/event', trackLimiter, async (req, res) => {
+  if (req.get('dnt') === '1') return res.status(204).end();
+  if (req.get('x-consent') === '0') return res.status(204).end();
+
+  const body = req.body || {};
+  const deviceId = validateDeviceId(body.deviceId || req.get('x-device'));
+  if (!deviceId) return res.status(400).json({ error: 'invalid_device_id' });
+
+  const events = Array.isArray(body.events) ? body.events.slice(0, 50) : [];
+  if (!events.length) return res.status(204).end();
+
+  // Normalise top-level context fields once — every event inherits them.
+  const ctx = {
+    sessionId:   safeText(body.sessionId || req.get('x-session') || '', 40),
+    sourceToken: safeText(body.sourceToken || '', 40),
+    utmSource:   safeText(body.utmSource || '', 40),
+    utmCampaign: safeText(body.utmCampaign || '', 60),
+    appVersion:  safeText(body.appVersion || '', 40),
+    platform:    safeText(body.platform || '', 16),
+    ipHash:      hashIp(req.ip),
+  };
+
+  const now = new Date();
+  try {
+    // Non-destructive device upsert. $setOnInsert captures attribution at
+    // first contact; $set updates things that naturally change boot-to-boot
+    // (lastSeen, platform, appVersion, ipHash). Counters bump atomically.
+    const setOnInsert = {
+      _id: deviceId,
+      firstSeen: now,
+      sourceToken:     ctx.sourceToken,
+      utmSource:       ctx.utmSource,
+      utmCampaign:     ctx.utmCampaign,
+      utmMedium:       safeText(body.utmMedium || '', 40),
+      utmContent:      safeText(body.utmContent || '', 60),
+      firstSeenMedium: safeText(body.firstSeenMedium || '', 24),
+    };
+    await Device.updateOne(
+      { _id: deviceId },
+      {
+        $setOnInsert: setOnInsert,
+        $set: {
+          lastSeen:    now,
+          platform:    ctx.platform,
+          osVersion:   safeText(body.osVersion || '', 24),
+          deviceModel: safeText(body.deviceModel || '', 60),
+          locale:      safeText(body.locale || '', 16),
+          appVersion:  ctx.appVersion,
+          ipHash:      ctx.ipHash,
+          lastUa:      safeText(req.get('user-agent') || '', 160),
+        },
+        $inc: {
+          totalEvents:   events.length,
+          totalSessions: events.filter(e => e && e.type === 'session_start').length,
+        },
+      },
+      { upsert: true }
+    );
+
+    // Bulk-insert the event batch. Drop unknown types silently rather than
+    // reject the whole batch — a new client shipping an event type the old
+    // server doesn't understand shouldn't kill analytics for everyone.
+    const docs = [];
+    for (const e of events) {
+      if (!e || typeof e !== 'object') continue;
+      const type = String(e.type || '').slice(0, 32);
+      if (!EVENT_TYPES.has(type)) continue;
+      docs.push({
+        deviceId,
+        sessionId:   ctx.sessionId,
+        type,
+        target:      safeText(e.target || '', 256),
+        label:       safeText(e.label  || '', 200),
+        variant:     safeText(e.variant || '', 8),
+        durationMs:  Math.max(0, Math.min(6 * 60 * 60_000, Number(e.durationMs) || 0)),
+        sourceToken: ctx.sourceToken,
+        utmSource:   ctx.utmSource,
+        utmCampaign: ctx.utmCampaign,
+        appVersion:  ctx.appVersion,
+        platform:    ctx.platform,
+        ipHash:      ctx.ipHash,
+        createdAt:   now,
+      });
+    }
+    if (docs.length) await EventLog.insertMany(docs, { ordered: false });
+  } catch {
+    // Intentionally swallow — analytics must never fail a client flow.
+  }
+  res.status(204).end();
+});
+
+// ─── Client error beacon ─────────────────────────────────────────
+// A minimal error sink so JS errors on the APK/Web surface back to the
+// operator. Runs on top of the EventLog stream (type=error).
+publicRouter.post('/track/error', trackLimiter, async (req, res) => {
+  if (req.get('dnt') === '1') return res.status(204).end();
+  if (req.get('x-consent') === '0') return res.status(204).end();
+  const body = req.body || {};
+  const deviceId = validateDeviceId(body.deviceId || req.get('x-device'));
+  if (!deviceId) return res.status(204).end();
+  try {
+    await EventLog.create({
+      deviceId,
+      sessionId: safeText(body.sessionId || '', 40),
+      type: 'error',
+      // target = URL where the error occurred, label = message (truncated)
+      target:  safeText(body.url || '', 256),
+      label:   safeText(body.message || '', 200),
+      appVersion: safeText(body.appVersion || '', 40),
+      platform:   safeText(body.platform   || '', 16),
+      sourceToken: safeText(body.sourceToken || '', 40),
+      ipHash: hashIp(req.ip),
+    });
+  } catch {}
+  res.status(204).end();
+});
+
 // ─── Install-link token gate ────────────────────────────────────
 // Dedicated download dashboard at /install/:token. The token rotates
 // whenever admin calls /api/admin/install-token/rotate, so a URL that
@@ -186,12 +341,30 @@ publicRouter.get('/admin-gate/:token', publicReadLimiter, async (req, res) => {
   res.json({ ok: true });
 });
 
+// Erase all data this requester might have generated. Two axes:
+//   1. Anything stored by IP hash (ClickEvent, EventLog, error rows)
+//   2. If they POST a deviceId we recognise, delete the Device doc and
+//      everything ever keyed to it (EventLog, future Session doc).
+// Silent 204 either way — we never tell the caller what was found.
 publicRouter.post('/privacy/forget', publicReadLimiter, async (req, res) => {
   const ipHash = hashIp(req.ip);
-  if (!ipHash) return res.status(204).end();
+  const bodyDev = validateDeviceId((req.body && req.body.deviceId) || req.get('x-device'));
+  if (!ipHash && !bodyDev) return res.status(204).end();
+  let clicks = 0, events = 0, devices = 0;
   try {
-    const result = await ClickEvent.deleteMany({ ipHash });
-    res.json({ deleted: result.deletedCount });
+    if (ipHash) {
+      const r1 = await ClickEvent.deleteMany({ ipHash });
+      clicks = r1.deletedCount || 0;
+      const r2 = await EventLog.deleteMany({ ipHash });
+      events += r2.deletedCount || 0;
+    }
+    if (bodyDev) {
+      const r3 = await EventLog.deleteMany({ deviceId: bodyDev });
+      events += r3.deletedCount || 0;
+      const r4 = await Device.deleteOne({ _id: bodyDev });
+      devices = r4.deletedCount || 0;
+    }
+    res.json({ clicks, events, devices });
   } catch { res.status(204).end(); }
 });
 

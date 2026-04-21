@@ -29,6 +29,7 @@ fs.mkdirSync(www, { recursive: true });
 const USER_ONLY_FILES = [
   'index.html',
   'security.jsx', 'icons.jsx', 'app-state.jsx', 'api-client.jsx',
+  'tracking.jsx',                  // anonymous growth / retention tracker
   'toast.jsx', 'online-indicator.jsx',
   'qr-share.jsx',                  // used by UserApp's share button
   'user-app.jsx', 'consent-banner.jsx',
@@ -48,6 +49,7 @@ for (const f of USER_ONLY_FILES) {
 // user-only set.
 const APK_SCRIPT_TAGS = [
   'security.jsx', 'icons.jsx', 'app-state.jsx', 'api-client.jsx',
+  'tracking.jsx',
   'toast.jsx', 'online-indicator.jsx', 'qr-share.jsx',
   'user-app.jsx', 'consent-banner.jsx',
 ].map(f => `<script type="text/babel" src="${f}"></script>`).join('\n');
@@ -73,6 +75,20 @@ if (API_BASE) {
   }
 }
 
+// Inject APP_BUILD_ID — a short commit SHA (or any unique build marker
+// the CI sets). The tracking client includes it on every event so the
+// operator can slice analytics by "which APK build did this event
+// come from", spot devices stuck on an old version, and correlate
+// crashes with a specific rollout. GITHUB_SHA is set by Actions;
+// falls back to empty string if built locally.
+const BUILD_ID = String(process.env.APP_BUILD_ID || process.env.GITHUB_SHA || '').slice(0, 40);
+if (BUILD_ID) {
+  const inject = `<script>window.APP_BUILD_ID=${JSON.stringify(BUILD_ID)};</script>`;
+  if (!html.includes('window.APP_BUILD_ID=')) {
+    html = html.replace('</head>', `${inject}\n</head>`);
+  }
+}
+
 // Drop the dev/designer "Tweaks" panel and any references to
 // localStorage-backed demo mode preferences — those were useful on the
 // web during development but are dead code in the APK.
@@ -84,5 +100,6 @@ fs.writeFileSync(indexPath, html);
 
 console.log('www ready at', www);
 console.log('  files bundled:', USER_ONLY_FILES.length);
-console.log('  API_BASE:', API_BASE || '(same-origin)');
+console.log('  API_BASE:   ', API_BASE || '(same-origin)');
+console.log('  BUILD_ID:   ', BUILD_ID || '(unset)');
 console.log('  stripped admin scripts from index.html — APK will 404 if code calls admin code paths (intended)');

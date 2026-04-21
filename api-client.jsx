@@ -164,6 +164,16 @@ const api = {
   async rotateAdminToken()      { return request('/api/admin/admin-token/rotate', { method: 'POST', auth: true }); },
   async getAnalytics()             { return request('/api/admin/analytics', { auth: true }); },
   async getButtonAnalytics(id)     { return request(`/api/admin/analytics/button/${encodeURIComponent(id)}`, { auth: true }); },
+  // Growth / retention (Phase 1 of the analytics plan)
+  async getDevicesSummary(days = 30)    { return request(`/api/admin/devices/summary?days=${days}`, { auth: true }); },
+  async getDevicesBreakdown(days = 30)  { return request(`/api/admin/devices/breakdown?days=${days}`, { auth: true }); },
+  async getFunnel(params = {}) {
+    const q = new URLSearchParams({ days: String(params.days || 7) });
+    if (params.sourceToken) q.set('sourceToken', params.sourceToken);
+    return request(`/api/admin/funnel?${q.toString()}`, { auth: true });
+  },
+  async getAttribution(days = 30)       { return request(`/api/admin/attribution?days=${days}`, { auth: true }); },
+  async getRecentErrors(days = 7)       { return request(`/api/admin/errors/recent?days=${days}`, { auth: true }); },
   async getAudit(opts = {}) {
     const q = new URLSearchParams({ limit: String(opts.limit || 50) });
     if (opts.cursor) q.set('cursor', opts.cursor);
@@ -190,7 +200,14 @@ const api = {
     const body = currentPassword ? { currentPassword, newPassword } : { newPassword };
     return request('/api/admin/me/password', { method: 'POST', body, auth: true });
   },
-  async forgetMe()               { return request('/api/privacy/forget', { method: 'POST' }); },
+  async forgetMe() {
+    // Include the client's anonymous device ID if the tracking client
+    // has one — the backend then erases Device + EventLog rows keyed to
+    // it, not only events keyed to the caller's IP hash.
+    let deviceId = '';
+    try { deviceId = (window.tracking && window.tracking.getDeviceId && window.tracking.getDeviceId()) || ''; } catch {}
+    return request('/api/privacy/forget', { method: 'POST', body: { deviceId } });
+  },
 
   // Push notifications
   async vapidKey()               { return request('/api/push/vapid-key'); },
@@ -208,6 +225,10 @@ async function loadInitialState() {
     if (DEBUG()) console.info('[boot] /api/config OK', { appName: cfg && cfg.appName, capabilities: cfg && cfg.capabilities });
     const merged = SafeState.sanitize({ ...DEFAULT_STATE, ...cfg }) || DEFAULT_STATE;
     const authed = await tryRefresh();
+    // Growth analytics: signal that the app successfully reached the
+    // backend. Fires once per page load. Safe if tracking.jsx didn't
+    // load (user blocked it) — we just skip.
+    try { if (typeof tracking !== 'undefined') tracking.emit('app_boot'); } catch {}
     return { state: merged, live: true, authed };
   } catch (e) {
     const msg = (e && e.message) || String(e);

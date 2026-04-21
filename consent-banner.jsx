@@ -34,9 +34,11 @@ function ConsentBanner() {
       </div>
       {expanded && (
         <ul style={{ fontSize: 11, opacity: 0.75, margin: '0 0 12px', paddingLeft: 18, lineHeight: 1.8 }}>
-          <li>ข้อมูลที่เก็บ: ปุ่มที่กด, เวลา, IP hash (HMAC-SHA256, ไม่ reversible)</li>
-          <li>User-Agent แบบย่อ (สูงสุด 160 ตัวอักษร)</li>
-          <li>ระยะเวลาเก็บ: 90 วัน (TTL อัตโนมัติ)</li>
+          <li>ข้อมูลที่เก็บ: ปุ่มที่กด, เหตุการณ์เปิดแอป/หน้าติดตั้ง, session duration</li>
+          <li>Device ID: UUID random ในอุปกรณ์คุณ (ไม่ผูกชื่อ/อีเมล) · ลบเมื่อ uninstall หรือเคลียร์ app data</li>
+          <li>IP ถูกเก็บเป็น HMAC-SHA256 hash (ไม่ reversible), User-Agent ถูกย่อ</li>
+          <li>ถ้ามาจากลิงก์ติดตั้ง เราบันทึก token ของลิงก์ (ไม่ใช่ข้อมูลคุณ) เพื่อรู้ว่าแคมเปญไหนได้ผล</li>
+          <li>ระยะเวลาเก็บ: events 90 วัน, device profile 180 วัน (TTL อัตโนมัติ)</li>
           <li>ลบออกเมื่อไหร่ก็ได้ผ่าน <code>/api/privacy/forget</code> หรือปุ่มด้านล่าง</li>
         </ul>
       )}

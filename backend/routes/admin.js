@@ -6,6 +6,8 @@ import { z } from 'zod';
 import webPush from 'web-push';
 import { getAppConfig } from '../models/AppConfig.js';
 import { ClickEvent } from '../models/ClickEvent.js';
+import { Device } from '../models/Device.js';
+import { EventLog } from '../models/EventLog.js';
 import { AuditLog } from '../models/AuditLog.js';
 import { User } from '../models/User.js';
 import { RefreshToken } from '../models/RefreshToken.js';
@@ -200,16 +202,30 @@ adminRouter.patch('/me', adminWriteLimiter, async (req, res) => {
 
 // ── Dashboard summary + 7-day timeseries ────────────────────
 adminRouter.get('/stats', requireRole('admin', 'editor'), async (req, res) => {
-  const dayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
-  const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+  const dayAgo   = new Date(Date.now() - 24 * 60 * 60 * 1000);
+  const weekAgo  = new Date(Date.now() - 7  * 24 * 60 * 60 * 1000);
+  const monthAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
 
-  const [userCount, activeUsers, clickToday, clickWeek, failedToday, cfg] = await Promise.all([
+  const [
+    userCount, activeUsers, clickToday, clickWeek, failedToday, cfg,
+    dau, wau, mau, newToday, totalDevices,
+    installViewsToday, installClicksToday, appBootsToday, buttonClicksToday,
+  ] = await Promise.all([
     User.countDocuments({}),
     User.countDocuments({ disabledAt: null }),
     ClickEvent.countDocuments({ createdAt: { $gte: dayAgo } }),
     ClickEvent.countDocuments({ createdAt: { $gte: weekAgo } }),
     AuditLog.countDocuments({ action: { $in: ['login_fail', 'login_unknown', 'login_locked', 'login_totp_fail'] }, createdAt: { $gte: dayAgo } }),
     getAppConfig(),
+    Device.countDocuments({ lastSeen: { $gte: dayAgo } }),
+    Device.countDocuments({ lastSeen: { $gte: weekAgo } }),
+    Device.countDocuments({ lastSeen: { $gte: monthAgo } }),
+    Device.countDocuments({ firstSeen: { $gte: dayAgo } }),
+    Device.countDocuments({}),
+    EventLog.countDocuments({ type: 'install_page_view', createdAt: { $gte: dayAgo } }),
+    EventLog.countDocuments({ type: 'install_click',     createdAt: { $gte: dayAgo } }),
+    EventLog.countDocuments({ type: 'app_boot',          createdAt: { $gte: dayAgo } }),
+    EventLog.countDocuments({ type: 'button_click',      createdAt: { $gte: dayAgo } }),
   ]);
 
   res.json({
@@ -217,6 +233,16 @@ adminRouter.get('/stats', requireRole('admin', 'editor'), async (req, res) => {
     clicks:   { today: clickToday, week: clickWeek },
     security: { failedLogins24h: failedToday },
     config:   { appName: cfg.appName, buttons: cfg.buttons.length, banners: cfg.banners.length, updatedAt: cfg.updatedAt },
+    // New: unique-device + funnel counts drawn from Device + EventLog.
+    // Non-zero only after the new tracking client ships and users
+    // boot instrumented builds.
+    devices:  { total: totalDevices, dau, wau, mau, newToday },
+    funnel:   {
+      installViewsToday,
+      installClicksToday,
+      appBootsToday,
+      buttonClicksToday,
+    },
   });
 });
 
@@ -749,6 +775,187 @@ adminRouter.get('/analytics/button/:id', requireRole('admin'), async (req, res) 
     { $group: { _id: { $ifNull: ['$variant', ''] }, count: { $sum: 1 } } },
   ]);
   res.json({ buttonId: bid, byHour, byVariant });
+});
+
+// ── Growth / retention analytics (Phase 1) ──────────────────
+// Powered by Device + EventLog. All endpoints scoped by a days= query
+// param (default 7, max 90). Returns only aggregates — no per-device
+// identifiers — so the admin UI can display dashboards without ever
+// touching individual device IDs.
+
+function parseDaysQ(req, def = 7) {
+  return Math.min(90, Math.max(1, parseInt(req.query.days, 10) || def));
+}
+
+// Top-line device counts on rolling windows + new-device trend.
+adminRouter.get('/devices/summary', requireRole('admin', 'editor'), async (req, res) => {
+  const days = parseDaysQ(req, 30);
+  const now = Date.now();
+  const dayAgo   = new Date(now - 24 * 60 * 60 * 1000);
+  const weekAgo  = new Date(now - 7  * 24 * 60 * 60 * 1000);
+  const monthAgo = new Date(now - 30 * 24 * 60 * 60 * 1000);
+  const windowStart = new Date(now - days * 24 * 60 * 60 * 1000);
+
+  const [total, dau, wau, mau, newByDay] = await Promise.all([
+    Device.countDocuments({}),
+    Device.countDocuments({ lastSeen:  { $gte: dayAgo   } }),
+    Device.countDocuments({ lastSeen:  { $gte: weekAgo  } }),
+    Device.countDocuments({ lastSeen:  { $gte: monthAgo } }),
+    Device.aggregate([
+      { $match: { firstSeen: { $gte: windowStart } } },
+      { $group: {
+          _id: { $dateToString: { format: '%Y-%m-%d', date: '$firstSeen', timezone: 'Asia/Bangkok' } },
+          count: { $sum: 1 },
+      } },
+      { $sort: { _id: 1 } },
+    ]),
+  ]);
+
+  res.json({ total, dau, wau, mau, newByDay, days });
+});
+
+// Platform / OS / locale breakdown — what kind of devices are using us.
+adminRouter.get('/devices/breakdown', requireRole('admin', 'editor'), async (req, res) => {
+  const days = parseDaysQ(req, 30);
+  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+  const match = { lastSeen: { $gte: since } };
+
+  const groupBy = (field) => Device.aggregate([
+    { $match: match },
+    { $group: { _id: { $ifNull: [`$${field}`, ''] }, count: { $sum: 1 } } },
+    { $sort: { count: -1 } },
+    { $limit: 20 },
+  ]);
+
+  const [platform, osVersion, locale, firstSeenMedium, appVersion] = await Promise.all([
+    groupBy('platform'),
+    groupBy('osVersion'),
+    groupBy('locale'),
+    groupBy('firstSeenMedium'),
+    groupBy('appVersion'),
+  ]);
+
+  res.json({ since, platform, osVersion, locale, firstSeenMedium, appVersion });
+});
+
+// Install funnel — counts each stage per rolling window. When
+// sourceToken= is set, the funnel is scoped to ONE install link so the
+// admin can compare campaigns. Uniques are over deviceId not ipHash.
+adminRouter.get('/funnel', requireRole('admin', 'editor'), async (req, res) => {
+  const days = parseDaysQ(req, 7);
+  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+  const sourceToken = String(req.query.sourceToken || '').slice(0, 40);
+
+  const baseMatch = { createdAt: { $gte: since } };
+  if (sourceToken) baseMatch.sourceToken = sourceToken;
+
+  const countByType = (type) => EventLog.aggregate([
+    { $match: { ...baseMatch, type } },
+    { $group: { _id: null, events: { $sum: 1 }, devices: { $addToSet: '$deviceId' } } },
+    { $project: { _id: 0, events: 1, uniques: { $size: '$devices' } } },
+  ]).then(r => r[0] || { events: 0, uniques: 0 });
+
+  const [views, clicks, boots, firstClicks] = await Promise.all([
+    countByType('install_page_view'),
+    countByType('install_click'),
+    countByType('app_boot'),
+    countByType('button_click'),
+  ]);
+
+  // Per-day timeseries for the funnel chart.
+  const byDay = await EventLog.aggregate([
+    { $match: { ...baseMatch, type: { $in: ['install_page_view', 'install_click', 'app_boot', 'button_click'] } } },
+    { $group: {
+        _id: {
+          day:  { $dateToString: { format: '%Y-%m-%d', date: '$createdAt', timezone: 'Asia/Bangkok' } },
+          type: '$type',
+        },
+        count: { $sum: 1 },
+    } },
+    { $sort: { '_id.day': 1 } },
+  ]);
+
+  res.json({ since, days, sourceToken, stages: { views, clicks, boots, firstClicks }, byDay });
+});
+
+// Per-source attribution — which install link / UTM source gave us
+// the most devices and the strongest engagement.
+adminRouter.get('/attribution', requireRole('admin', 'editor'), async (req, res) => {
+  const days = parseDaysQ(req, 30);
+  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+
+  const bySourceToken = await Device.aggregate([
+    { $match: { firstSeen: { $gte: since }, sourceToken: { $ne: '' } } },
+    { $group: { _id: '$sourceToken',
+        devices:       { $sum: 1 },
+        totalEvents:   { $sum: '$totalEvents' },
+        totalSessions: { $sum: '$totalSessions' },
+        lastFirstSeen: { $max: '$firstSeen' },
+    } },
+    { $sort: { devices: -1 } },
+    { $limit: 20 },
+    { $project: { _id: 0, sourceToken: '$_id', devices: 1, totalEvents: 1, totalSessions: 1, lastFirstSeen: 1 } },
+  ]);
+
+  const byUtmSource = await Device.aggregate([
+    { $match: { firstSeen: { $gte: since }, utmSource: { $ne: '' } } },
+    { $group: { _id: '$utmSource',
+        devices: { $sum: 1 },
+        totalEvents: { $sum: '$totalEvents' },
+    } },
+    { $sort: { devices: -1 } },
+    { $limit: 20 },
+    { $project: { _id: 0, utmSource: '$_id', devices: 1, totalEvents: 1 } },
+  ]);
+
+  const byUtmCampaign = await Device.aggregate([
+    { $match: { firstSeen: { $gte: since }, utmCampaign: { $ne: '' } } },
+    { $group: { _id: '$utmCampaign',
+        devices: { $sum: 1 },
+        totalEvents: { $sum: '$totalEvents' },
+    } },
+    { $sort: { devices: -1 } },
+    { $limit: 20 },
+    { $project: { _id: 0, utmCampaign: '$_id', devices: 1, totalEvents: 1 } },
+  ]);
+
+  const byMedium = await Device.aggregate([
+    { $match: { firstSeen: { $gte: since }, firstSeenMedium: { $ne: '' } } },
+    { $group: { _id: '$firstSeenMedium',
+        devices: { $sum: 1 },
+    } },
+    { $sort: { devices: -1 } },
+    { $limit: 20 },
+    { $project: { _id: 0, medium: '$_id', devices: 1 } },
+  ]);
+
+  res.json({ since, days, bySourceToken, byUtmSource, byUtmCampaign, byMedium });
+});
+
+// Recent client-side errors for the operator to eyeball. Limited to 50
+// most-recent with a distinct signature so a noisy loop doesn't fill
+// the response.
+adminRouter.get('/errors/recent', requireRole('admin'), async (req, res) => {
+  const days = parseDaysQ(req, 7);
+  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+  const rows = await EventLog.aggregate([
+    { $match: { type: 'error', createdAt: { $gte: since } } },
+    { $group: {
+        _id: { message: '$label', url: '$target' },
+        count: { $sum: 1 },
+        lastAt: { $max: '$createdAt' },
+        platforms: { $addToSet: '$platform' },
+        appVersions: { $addToSet: '$appVersion' },
+    } },
+    { $sort: { lastAt: -1 } },
+    { $limit: 50 },
+    { $project: {
+        _id: 0,
+        message: '$_id.message', url: '$_id.url',
+        count: 1, lastAt: 1, platforms: 1, appVersions: 1,
+    } },
+  ]);
+  res.json({ since, rows });
 });
 
 // ── Audit log read + CSV export ─────────────────────────────

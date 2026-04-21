@@ -41,11 +41,15 @@ function InstallPage() {
 
   React.useEffect(() => {
     load();
+    // Growth funnel: record this page view exactly once per mount. The
+    // tracking client de-dupes attribution so this also pins the source
+    // token even if the user later visits / with no token.
+    try { if (typeof tracking !== 'undefined') tracking.emit('install_page_view', { target: token }); } catch {}
     // Real-time sync: if admin changes downloadLinks while page is open,
     // refresh within ~5s without requiring the visitor to reload.
     const id = setInterval(() => { if (!document.hidden) load(); }, 5000);
     return () => clearInterval(id);
-  }, [load]);
+  }, [load, token]);
 
   const platform = React.useMemo(() => detectPlatform(), []);
   const theme = React.useMemo(() => getTheme(cfg), [cfg]);
@@ -253,7 +257,17 @@ function InstallPage() {
 // ── Helper components ──────────────────────────────────────────
 
 function DownloadButtons({ dl, platform, small = false }) {
-  const track = (which) => { try { api.trackClick?.('install_page_' + which, which, ''); } catch {} };
+  const track = (which, href) => {
+    try { api.trackClick?.('install_page_' + which, which, ''); } catch {}
+    try {
+      if (typeof tracking !== 'undefined') {
+        tracking.emit('install_click', { target: href || '', label: which });
+        // Flush immediately — the user is about to navigate away and
+        // we don't want to lose the conversion event to the debounce.
+        tracking.flush && tracking.flush();
+      }
+    } catch {}
+  };
   const open = (href) => {
     const safe = (typeof safeUrl === 'function') ? safeUrl(href) : href;
     if (!safe) return;
@@ -262,7 +276,7 @@ function DownloadButtons({ dl, platform, small = false }) {
   };
   const btn = (href, label, mark) => (
     <button
-      onClick={() => { track(mark); open(href); }}
+      onClick={() => { track(mark, href); open(href); }}
       style={{
         width: '100%', padding: small ? '12px 16px' : '16px 22px',
         borderRadius: small ? 12 : 16, border: 'none',

@@ -99,6 +99,21 @@ function DashboardTab({ me, state }) {
         <StatCard loading={!stats} icon="x"        label="ล็อกอินล้มเหลว 24 ชม" main={stats?.security?.failedLogins24h} sub="ถ้าสูงผิดปกติ → ตรวจ Audit" tone={stats?.security?.failedLogins24h > 20 ? 'danger' : 'default'}/>
       </div>
 
+      {/* Growth row — anonymous device counts + install funnel */}
+      <div className="ad-stagger" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 16 }}>
+        <StatCard loading={!stats} icon="sparkle" label="DAU · ผู้ใช้วันนี้"  main={stats?.devices?.dau}
+                  sub={stats ? `WAU ${stats.devices?.wau ?? 0} · MAU ${stats.devices?.mau ?? 0}` : 'WAU … · MAU …'}/>
+        <StatCard loading={!stats} icon="heart"   label="ผู้ใช้ใหม่วันนี้"     main={stats?.devices?.newToday}
+                  sub={stats ? `รวม ${stats.devices?.total ?? 0} devices` : 'รวม …'}/>
+        <StatCard loading={!stats} icon="gift"    label="เปิดหน้าติดตั้ง"     main={stats?.funnel?.installViewsToday}
+                  sub={stats ? `กดดาวน์โหลด ${stats.funnel?.installClicksToday ?? 0}` : 'กดดาวน์โหลด …'}/>
+        <StatCard loading={!stats} icon="leaf"    label="เปิดแอปวันนี้"       main={stats?.funnel?.appBootsToday}
+                  sub={stats ? `กดปุ่มในแอป ${stats.funnel?.buttonClicksToday ?? 0}` : 'กดปุ่มในแอป …'}/>
+      </div>
+
+      {/* Attribution panel — only surfaces when there's Phase 1 data */}
+      {typeof AttributionPanel === 'function' && <AttributionPanel/>}
+
       <Card style={{ marginBottom: 12 }}>
         <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 6 }}>7 วันที่ผ่านมา</div>
         {chartData && typeof LineChart === 'function'
@@ -204,4 +219,81 @@ const refreshStyle = {
   fontFamily: 'inherit', fontSize: 12, cursor: 'pointer',
 };
 
+// ─── Attribution panel ──────────────────────────────────────
+// Compact "where did our users come from?" card for the dashboard.
+// Pulls /api/admin/attribution (30-day window) and renders:
+//   • Top source tokens (install links admin shared)
+//   • Top UTM sources (utm_source=line | facebook | …)
+//   • First-seen medium (was the first open via LINE webview? browser? APK?)
+// Everything is anonymous aggregates — no per-device identifiers.
+function AttributionPanel() {
+  const [data, setData] = React.useState(null);
+  const [err, setErr]   = React.useState('');
+  React.useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await api.getAttribution(30);
+        if (!cancelled) setData(r);
+      } catch (e) {
+        if (!cancelled) setErr(e.message || 'load_failed');
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  const anyData = data && (
+    (data.bySourceToken?.length || 0) +
+    (data.byUtmSource?.length   || 0) +
+    (data.byMedium?.length      || 0)
+  ) > 0;
+
+  return (
+    <Card style={{ marginBottom: 14 }} className="ad-card-hover">
+      <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 10, display: 'flex', alignItems: 'center', gap: 8 }}>
+        <span>📊 ที่มาผู้ใช้ (30 วันล่าสุด)</span>
+        {!data && !err && <span className="ad-spin ad-spin-sm"/>}
+      </div>
+      {err && <div style={{ fontSize: 12, color: '#B4463A' }}>โหลดไม่สำเร็จ — {err}</div>}
+      {data && !anyData && (
+        <div style={{ fontSize: 12, color: '#8F877C', lineHeight: 1.6, padding: '8px 0' }}>
+          ยังไม่มีข้อมูลการติดตาม · ข้อมูลจะเริ่มเก็บหลังจากเวอร์ชันใหม่ของแอปขึ้นให้ user และมีคนเปิดหน้าติดตั้ง/ดาวน์โหลด
+        </div>
+      )}
+      {data && anyData && (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 14 }}>
+          <AttrColumn title="Install Tokens"
+            rows={(data.bySourceToken || []).slice(0, 6).map(r => ({ name: r.sourceToken.slice(0, 10) + '…', count: r.devices }))}/>
+          <AttrColumn title="UTM Source"
+            rows={(data.byUtmSource || []).slice(0, 6).map(r => ({ name: r.utmSource, count: r.devices }))}/>
+          <AttrColumn title="Medium"
+            rows={(data.byMedium || []).slice(0, 6).map(r => ({ name: r.medium, count: r.devices }))}/>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+function AttrColumn({ title, rows }) {
+  const max = Math.max(1, ...rows.map(r => r.count));
+  return (
+    <div>
+      <div style={{ fontSize: 11, color: '#6B6458', fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 6 }}>{title}</div>
+      {rows.length === 0 && <div style={{ fontSize: 11, color: '#8F877C' }}>—</div>}
+      {rows.map((r, i) => (
+        <div key={i} style={{ marginBottom: 6 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, marginBottom: 2 }}>
+            <span style={{ color: '#1F1B17', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '80%' }}>{r.name || '—'}</span>
+            <span style={{ color: '#6B6458', fontVariantNumeric: 'tabular-nums' }}>{r.count}</span>
+          </div>
+          <div style={{ height: 3, background: 'rgba(0,0,0,0.05)', borderRadius: 3, overflow: 'hidden' }}>
+            <div style={{ width: `${(r.count / max) * 100}%`, height: '100%', background: 'linear-gradient(90deg, #C48B3E, #B4463A)' }}/>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+window.AttributionPanel = AttributionPanel;
 window.DashboardTab = DashboardTab;
