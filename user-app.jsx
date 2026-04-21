@@ -233,6 +233,16 @@ function UserApp({ state, pageKey, onButtonPress, fullscreen = false }) {
       setToast({ label: btn.label, url: safe });
       clearTimeout(toastTimer.current);
       toastTimer.current = setTimeout(() => setToast(null), 2400);
+      // Phase 2: record that the user actually navigates away to the
+      // button's target. button_click measures intent; exit_click
+      // measures conversion. Flush is immediate because navigating
+      // might tear down the page before the debounce fires.
+      try {
+        if (typeof tracking !== 'undefined') {
+          tracking.emit('exit_click', { target: safe, label: btn.label, variant: btn.variant || '' });
+          tracking.flush && tracking.flush();
+        }
+      } catch {}
       if (typeof openExternal === 'function') openExternal(safe);
       else window.open(safe, '_blank', 'noopener,noreferrer');
     } else {
@@ -241,6 +251,17 @@ function UserApp({ state, pageKey, onButtonPress, fullscreen = false }) {
       toastTimer.current = setTimeout(() => setToast(null), 1800);
     }
   };
+
+  // Fire screen_view whenever the user changes tag filter / search mode.
+  // Debounced to avoid one-per-keystroke spam.
+  React.useEffect(() => {
+    if (typeof tracking === 'undefined') return;
+    const t = setTimeout(() => {
+      const screen = activeTag ? `tag:${activeTag}` : (query ? 'search' : 'home');
+      try { tracking.emit('screen_view', { target: screen }); } catch {}
+    }, 400);
+    return () => clearTimeout(t);
+  }, [activeTag, query]);
 
   const toggleDark = () => {
     const next = !userPrefersDark;

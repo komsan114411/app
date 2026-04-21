@@ -8,6 +8,7 @@ import { getAppConfig } from '../models/AppConfig.js';
 import { ClickEvent } from '../models/ClickEvent.js';
 import { Device } from '../models/Device.js';
 import { EventLog } from '../models/EventLog.js';
+import { PushCampaign } from '../models/PushCampaign.js';
 import { AuditLog } from '../models/AuditLog.js';
 import { User } from '../models/User.js';
 import { RefreshToken } from '../models/RefreshToken.js';
@@ -932,6 +933,381 @@ adminRouter.get('/attribution', requireRole('admin', 'editor'), async (req, res)
   res.json({ since, days, bySourceToken, byUtmSource, byUtmCampaign, byMedium });
 });
 
+// ── Phase 2: Engagement — retention + sessions + time-to-first ──
+
+// Cohort retention: for each week-cohort (Monday-anchored), measure
+// how many of its devices came back on days 1/7/14/30 relative to
+// their firstSeen. Returns the matrix the heatmap renders directly.
+//
+// Cost note: this is O(devices in window × events per device) via
+// aggregate; with a 90-day window and 10k devices it's well under a
+// second on a warm Mongo. Not a candidate for materialized view yet.
+adminRouter.get('/retention/cohorts', requireRole('admin', 'editor'), async (req, res) => {
+  const weeks = Math.min(12, Math.max(1, parseInt(req.query.weeks, 10) || 8));
+  const since = new Date(Date.now() - weeks * 7 * 24 * 60 * 60 * 1000);
+
+  // Devices grouped by their first-seen ISO week label (YYYY-Wnn).
+  const cohorts = await Device.aggregate([
+    { $match: { firstSeen: { $gte: since } } },
+    { $group: {
+        _id: { $dateToString: { format: '%G-W%V', date: '$firstSeen', timezone: 'Asia/Bangkok' } },
+        size: { $sum: 1 },
+        firstSeenMin: { $min: '$firstSeen' },
+        deviceIds: { $addToSet: '$_id' },
+    } },
+    { $sort: { _id: 1 } },
+  ]).allowDiskUse(true);
+
+  // For each cohort, count how many deviceIds had *any* EventLog row
+  // whose createdAt lands on the nth day after the cohort anchor.
+  const offsets = [1, 7, 14, 30];
+  const rows = [];
+  for (const c of cohorts) {
+    const anchor = c.firstSeenMin;
+    const row = { cohort: c._id, size: c.size, retained: {} };
+    // One $match per offset keeps the pipeline small and
+    // parallelisable via Promise.all.
+    const checks = await Promise.all(offsets.map(async (d) => {
+      if (c.size === 0) return [d, 0];
+      const from = new Date(anchor.getTime() + d * 24 * 60 * 60 * 1000);
+      const to   = new Date(from.getTime() + 24 * 60 * 60 * 1000);
+      const retained = await EventLog.distinct('deviceId', {
+        deviceId: { $in: c.deviceIds },
+        createdAt: { $gte: from, $lt: to },
+      });
+      return [d, retained.length];
+    }));
+    for (const [d, n] of checks) row.retained[`d${d}`] = n;
+    rows.push(row);
+  }
+  res.json({ weeks, cohorts: rows });
+});
+
+// Session aggregates — average duration, sessions per device, distribution.
+adminRouter.get('/sessions/summary', requireRole('admin', 'editor'), async (req, res) => {
+  const days = parseDaysQ(req, 7);
+  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+
+  // All session_end events in the window carry durationMs.
+  const agg = await EventLog.aggregate([
+    { $match: { type: 'session_end', createdAt: { $gte: since }, durationMs: { $gt: 0 } } },
+    { $group: {
+        _id: null,
+        sessions:       { $sum: 1 },
+        devices:        { $addToSet: '$deviceId' },
+        totalDuration:  { $sum: '$durationMs' },
+        avgDuration:    { $avg: '$durationMs' },
+        maxDuration:    { $max: '$durationMs' },
+    } },
+    { $project: {
+        _id: 0, sessions: 1,
+        uniqueDevices: { $size: '$devices' },
+        totalDuration: 1, avgDuration: 1, maxDuration: 1,
+    } },
+  ]);
+  const s = agg[0] || { sessions: 0, uniqueDevices: 0, totalDuration: 0, avgDuration: 0, maxDuration: 0 };
+
+  // Duration buckets (histogram) — counts per bucket.
+  const buckets = await EventLog.aggregate([
+    { $match: { type: 'session_end', createdAt: { $gte: since }, durationMs: { $gt: 0 } } },
+    { $bucket: {
+        groupBy: '$durationMs',
+        boundaries: [0, 10_000, 30_000, 60_000, 300_000, 900_000, 3_600_000, 24 * 3_600_000],
+        default: 'other',
+        output: { count: { $sum: 1 } },
+    } },
+  ]);
+
+  res.json({ since, days, ...s,
+    sessionsPerDevice: s.uniqueDevices ? s.sessions / s.uniqueDevices : 0,
+    buckets,
+  });
+});
+
+// Time-to-first-action — for each device that had an app_boot in the
+// window, measure the ms until their FIRST button_click (if any).
+adminRouter.get('/time-to-first', requireRole('admin', 'editor'), async (req, res) => {
+  const days = parseDaysQ(req, 7);
+  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+
+  const rows = await EventLog.aggregate([
+    { $match: { type: { $in: ['app_boot', 'button_click'] }, createdAt: { $gte: since } } },
+    { $sort: { deviceId: 1, createdAt: 1 } },
+    { $group: {
+        _id: '$deviceId',
+        firstBoot:  { $min: { $cond: [{ $eq: ['$type', 'app_boot'] },     '$createdAt', null] } },
+        firstClick: { $min: { $cond: [{ $eq: ['$type', 'button_click'] }, '$createdAt', null] } },
+    } },
+    { $match: { firstBoot: { $ne: null }, firstClick: { $ne: null } } },
+    { $project: { _id: 0, ms: { $subtract: ['$firstClick', '$firstBoot'] } } },
+    { $match: { ms: { $gte: 0, $lt: 60 * 60_000 } } },  // cap absurdities at 1 hour
+    { $group: {
+        _id: null, devices: { $sum: 1 },
+        avg: { $avg: '$ms' }, median: { $avg: '$ms' },  // rough — true median via $percentile below
+    } },
+  ]);
+
+  // True percentiles (MongoDB 7+ supports $percentile; guard with try/catch).
+  let pct = null;
+  try {
+    const p = await EventLog.aggregate([
+      { $match: { type: { $in: ['app_boot', 'button_click'] }, createdAt: { $gte: since } } },
+      { $sort: { deviceId: 1, createdAt: 1 } },
+      { $group: {
+          _id: '$deviceId',
+          firstBoot:  { $min: { $cond: [{ $eq: ['$type', 'app_boot'] },     '$createdAt', null] } },
+          firstClick: { $min: { $cond: [{ $eq: ['$type', 'button_click'] }, '$createdAt', null] } },
+      } },
+      { $match: { firstBoot: { $ne: null }, firstClick: { $ne: null } } },
+      { $project: { _id: 0, ms: { $subtract: ['$firstClick', '$firstBoot'] } } },
+      { $match: { ms: { $gte: 0, $lt: 60 * 60_000 } } },
+      { $group: {
+          _id: null,
+          p50: { $percentile: { input: '$ms', p: [0.5],  method: 'approximate' } },
+          p90: { $percentile: { input: '$ms', p: [0.9],  method: 'approximate' } },
+          p99: { $percentile: { input: '$ms', p: [0.99], method: 'approximate' } },
+      } },
+    ]);
+    pct = p[0] || null;
+  } catch { /* older mongo, skip */ }
+
+  res.json({ since, days, summary: rows[0] || { devices: 0, avg: 0 }, percentiles: pct });
+});
+
+// Top outgoing links by exit_click count — shows which buttons actually
+// drive users to their targets (complements button_click/analytics).
+adminRouter.get('/exits', requireRole('admin'), async (req, res) => {
+  const days = parseDaysQ(req, 30);
+  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+  const rows = await EventLog.aggregate([
+    { $match: { type: 'exit_click', createdAt: { $gte: since } } },
+    { $group: {
+        _id: { target: '$target', label: '$label' },
+        clicks: { $sum: 1 },
+        devices: { $addToSet: '$deviceId' },
+    } },
+    { $sort: { clicks: -1 } },
+    { $limit: 50 },
+    { $project: { _id: 0, target: '$_id.target', label: '$_id.label', clicks: 1, uniques: { $size: '$devices' } } },
+  ]);
+  res.json({ since, rows });
+});
+
+// ── Phase 5: advanced analytics ─────────────────────────────
+
+// Chi-squared test for A/B variant significance. Compares click
+// counts for variant 'a' vs 'b' on a single button, returns a p-value
+// approximation (without lookup tables) using Wilson–Hilferty.
+function chiSquaredP(chi2, df = 1) {
+  // Very rough p-value approximation for df=1 (sufficient for 2x2
+  // binary comparison). Returns 0..1.
+  if (df !== 1) return NaN;
+  const z = Math.sqrt(chi2);
+  const p = 2 * (1 - 0.5 * (1 + erf(z / Math.SQRT2)));
+  return Math.max(0, Math.min(1, p));
+}
+function erf(x) {
+  // Abramowitz & Stegun 7.1.26 — ~1e-7 accuracy.
+  const sign = x < 0 ? -1 : 1; x = Math.abs(x);
+  const a1 = 0.254829592, a2 = -0.284496736, a3 = 1.421413741,
+        a4 = -1.453152027, a5 = 1.061405429, p = 0.3275911;
+  const t = 1 / (1 + p * x);
+  const y = 1 - (((((a5 * t + a4) * t) + a3) * t + a2) * t + a1) * t * Math.exp(-x * x);
+  return sign * y;
+}
+
+// Statistical significance of A/B variants for one button.
+adminRouter.get('/analytics/button/:id/significance', requireRole('admin'), async (req, res) => {
+  const bid = String(req.params.id || '').slice(0, 64);
+  if (!bid) return res.status(400).json({ error: 'invalid_id' });
+  const days = parseDaysQ(req, 30);
+  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+
+  // Variant counts from EventLog first (new flow); fall back to
+  // ClickEvent so older data still contributes.
+  const rows = await EventLog.aggregate([
+    { $match: { type: 'button_click', target: bid, createdAt: { $gte: since }, variant: { $in: ['a', 'b'] } } },
+    { $group: { _id: '$variant', events: { $sum: 1 }, devices: { $addToSet: '$deviceId' } } },
+    { $project: { _id: 0, variant: '$_id', events: 1, uniques: { $size: '$devices' } } },
+  ]);
+  const a = rows.find(r => r.variant === 'a') || { events: 0, uniques: 0 };
+  const b = rows.find(r => r.variant === 'b') || { events: 0, uniques: 0 };
+
+  const n1 = a.uniques, n2 = b.uniques;
+  const x1 = a.events,  x2 = b.events;
+  // 2-sample binomial chi-squared on click rate per unique device.
+  // Null hypothesis: variants have the same click rate.
+  let chi2 = NaN, p = NaN, winner = null, delta = 0;
+  if (n1 > 0 && n2 > 0) {
+    const p1 = x1 / Math.max(1, n1);
+    const p2 = x2 / Math.max(1, n2);
+    const pooled = (x1 + x2) / (n1 + n2);
+    const expected1 = pooled * n1;
+    const expected2 = pooled * n2;
+    if (expected1 > 0 && expected2 > 0) {
+      chi2 = Math.pow(x1 - expected1, 2) / expected1 + Math.pow(x2 - expected2, 2) / expected2;
+      p = chiSquaredP(chi2, 1);
+      delta = p2 - p1;
+      if (p < 0.05 && Math.abs(delta) > 0.01) winner = delta > 0 ? 'b' : 'a';
+    }
+  }
+
+  res.json({
+    since, days, buttonId: bid,
+    a, b,
+    chi2: Number.isFinite(chi2) ? chi2 : null,
+    pValue: Number.isFinite(p) ? p : null,
+    delta,  // positive = B beats A
+    winner,
+    significant: p != null && p < 0.05,
+  });
+});
+
+// Sankey funnel — produces the 3 transitions the admin dashboard
+// renders as a flow diagram: page_view→click, click→boot, boot→button.
+adminRouter.get('/sankey', requireRole('admin', 'editor'), async (req, res) => {
+  const days = parseDaysQ(req, 30);
+  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+
+  const distinctDevices = async (type) => (await EventLog.distinct('deviceId', { type, createdAt: { $gte: since } })).filter(Boolean);
+  const [views, clicks, boots, btnClicks] = await Promise.all([
+    distinctDevices('install_page_view'),
+    distinctDevices('install_click'),
+    distinctDevices('app_boot'),
+    distinctDevices('button_click'),
+  ]);
+  const setV = new Set(views), setC = new Set(clicks), setB = new Set(boots), setBC = new Set(btnClicks);
+
+  const intersect = (a, b) => { let n = 0; for (const x of a) if (b.has(x)) n++; return n; };
+  const viewsToClick = intersect(setV, setC);
+  const clickToBoot  = intersect(setC, setB);
+  const bootToBtn    = intersect(setB, setBC);
+
+  res.json({
+    since, days,
+    nodes: [
+      { id: 'view',  label: 'เปิดหน้าติดตั้ง',   value: setV.size },
+      { id: 'click', label: 'กดดาวน์โหลด',       value: setC.size },
+      { id: 'boot',  label: 'เปิดแอป',           value: setB.size },
+      { id: 'btn',   label: 'กดปุ่มแรก',         value: setBC.size },
+    ],
+    links: [
+      { from: 'view',  to: 'click', value: viewsToClick, drop: setV.size - viewsToClick },
+      { from: 'click', to: 'boot',  value: clickToBoot,  drop: setC.size - clickToBoot },
+      { from: 'boot',  to: 'btn',   value: bootToBtn,    drop: setB.size - bootToBtn },
+    ],
+  });
+});
+
+// Anomaly detection — 14-day baseline mean + stddev, flag today if it's
+// >3σ off. Cheap to compute; the admin panel renders alerts.
+adminRouter.get('/anomaly', requireRole('admin', 'editor'), async (req, res) => {
+  const days = 14;
+  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+
+  const daily = await EventLog.aggregate([
+    { $match: { createdAt: { $gte: since } } },
+    { $group: {
+        _id: { day: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt', timezone: 'Asia/Bangkok' } }, type: '$type' },
+        count: { $sum: 1 },
+    } },
+    { $sort: { '_id.day': 1 } },
+  ]);
+
+  // Pivot to {day: {type: count}}
+  const grid = {};
+  for (const r of daily) {
+    grid[r._id.day] = grid[r._id.day] || {};
+    grid[r._id.day][r._id.type] = r.count;
+  }
+  const daysSorted = Object.keys(grid).sort();
+  const today = daysSorted.at(-1) || null;
+  const baseline = daysSorted.slice(0, -1);
+  const interesting = ['app_boot', 'button_click', 'install_page_view', 'install_click'];
+  const alerts = [];
+  for (const type of interesting) {
+    const samples = baseline.map(d => grid[d]?.[type] || 0);
+    if (samples.length < 3) continue;
+    const mean = samples.reduce((s, v) => s + v, 0) / samples.length;
+    const variance = samples.reduce((s, v) => s + (v - mean) ** 2, 0) / samples.length;
+    const sd = Math.sqrt(variance);
+    const todayN = today ? (grid[today]?.[type] || 0) : 0;
+    const z = sd > 0 ? (todayN - mean) / sd : 0;
+    if (Math.abs(z) >= 3 || (mean > 5 && todayN === 0)) {
+      alerts.push({
+        type, todayCount: todayN,
+        baselineMean: Math.round(mean),
+        zScore: Number(z.toFixed(2)),
+        direction: z > 0 ? 'spike' : 'drop',
+      });
+    }
+  }
+
+  res.json({ today, alerts, samples: daysSorted.length });
+});
+
+// Country breakdown — uses a trusted upstream header (CF-IPCountry if
+// Cloudflare in front, X-Vercel-IP-Country if Vercel, X-Forwarded-…
+// otherwise). Railway itself doesn't emit one by default. We aggregate
+// the header value off Devices' ipHash → too lossy once hashed. Instead
+// this endpoint summarises whatever locale we already have — a coarse
+// proxy for country when ISO locales are used (en-TH, th, etc.).
+adminRouter.get('/geo/locale', requireRole('admin', 'editor'), async (req, res) => {
+  const days = parseDaysQ(req, 30);
+  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+  const rows = await Device.aggregate([
+    { $match: { lastSeen: { $gte: since }, locale: { $ne: '' } } },
+    { $group: { _id: { $substrCP: [{ $toLower: '$locale' }, 0, 2] }, count: { $sum: 1 } } },
+    { $sort: { count: -1 } },
+    { $limit: 30 },
+    { $project: { _id: 0, language: '$_id', count: 1 } },
+  ]);
+  res.json({ since, rows });
+});
+
+// ── SSE live activity feed ──────────────────────────────────
+// Streams the most recent events every 3 seconds. Intentionally
+// lightweight: the endpoint polls EventLog on a timer and pushes
+// diffs to connected admins. No websocket, no Redis pubsub needed.
+adminRouter.get('/events/stream', requireRole('admin', 'editor'), async (req, res) => {
+  res.writeHead(200, {
+    'Content-Type':  'text/event-stream',
+    'Cache-Control': 'no-cache, no-transform',
+    'X-Accel-Buffering': 'no',   // disable nginx/Railway proxy buffering
+    Connection: 'keep-alive',
+  });
+  res.write(': connected\n\n');
+
+  let lastSeenAt = Date.now() - 60_000;  // start with the last minute
+  let closed = false;
+  req.on('close', () => { closed = true; });
+
+  const tick = async () => {
+    if (closed) return;
+    try {
+      const since = new Date(lastSeenAt);
+      const rows = await EventLog.find({ createdAt: { $gt: since } })
+        .sort({ createdAt: 1 })
+        .limit(50)
+        .select('type target label platform createdAt sourceToken')
+        .lean();
+      for (const r of rows) {
+        if (r.createdAt.getTime() > lastSeenAt) lastSeenAt = r.createdAt.getTime();
+        res.write('event: ev\n');
+        res.write('data: ' + JSON.stringify({
+          type: r.type, target: r.target, label: r.label,
+          platform: r.platform, at: r.createdAt,
+          src: r.sourceToken || '',
+        }) + '\n\n');
+      }
+      // Heartbeat even when no data so proxies don't kill the socket.
+      res.write(': ping\n\n');
+    } catch {}
+    if (!closed) setTimeout(tick, 3000);
+  };
+  tick();
+});
+
 // Recent client-side errors for the operator to eyeball. Limited to 50
 // most-recent with a distinct signature so a noisy loop doesn't fill
 // the response.
@@ -1460,6 +1836,190 @@ adminRouter.post('/push/broadcast', adminWriteLimiter, requireRole('admin'), asy
     diff: { title: p.data.title, url: safeClickUrl, sent, failed, pruned: staleEndpoints.length, rejected: rejectedEndpoints.length },
   });
   res.json({ sent, failed, pruned: staleEndpoints.length, rejected: rejectedEndpoints.length });
+});
+
+// ─── Phase 3: push segmentation + campaigns ─────────────────
+
+// Resolve a segment spec to a set of deviceIds. Used by both
+// "preview count" (admin UI) and the actual send worker.
+async function resolveSegment(segment) {
+  const now = Date.now();
+  const match = {};
+  if (segment.inactiveDays > 0) {
+    match.lastSeen = { $lt: new Date(now - segment.inactiveDays * 24 * 60 * 60 * 1000) };
+  }
+  if (segment.activeDays > 0) {
+    match.lastSeen = { ...(match.lastSeen || {}), $gte: new Date(now - segment.activeDays * 24 * 60 * 60 * 1000) };
+  }
+  if (segment.newWithinDays > 0) {
+    match.firstSeen = { $gte: new Date(now - segment.newWithinDays * 24 * 60 * 60 * 1000) };
+  }
+  if (segment.sourceToken) match.sourceToken = segment.sourceToken;
+  if (segment.utmSource)   match.utmSource   = segment.utmSource;
+  if (segment.platform)    match.platform    = new RegExp('^' + escapeRe(segment.platform));
+  if (segment.locale)      match.locale      = new RegExp('^' + escapeRe(segment.locale));
+
+  let ids;
+  if (segment.clickedButton) {
+    // Devices that emitted a button_click with target == clickedButton.
+    const hits = await EventLog.distinct('deviceId', {
+      type: 'button_click',
+      target: segment.clickedButton,
+    });
+    ids = hits;
+    if (Object.keys(match).length) {
+      const filtered = await Device.distinct('_id', { _id: { $in: ids }, ...match });
+      ids = filtered;
+    }
+  } else {
+    ids = await Device.distinct('_id', match);
+  }
+  return ids;
+}
+function escapeRe(s) { return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+
+// Preview — how many devices match?
+adminRouter.post('/push/segment/preview', adminWriteLimiter, requireRole('admin'), async (req, res) => {
+  const segment = (req.body && req.body.segment) || {};
+  try {
+    const ids = await resolveSegment(segment);
+    res.json({ count: ids.length });
+  } catch (e) {
+    log.warn({ err: e?.message }, 'segment_preview_error');
+    res.status(500).json({ error: 'segment_error' });
+  }
+});
+
+// Resolved send: like /push/broadcast but only to the devices in the
+// segment. We compute push subscriptions by joining on deviceId — a
+// PushSubscription was stored with userId for admins, but end-users
+// subscribe anonymously so we can't join by userId. Instead we match
+// the subscriber's ipHash to any Device the segment resolved to with
+// the same ipHash within the last 7 days (best-effort join in the
+// absence of a direct device↔subscription link).
+//
+// This is a known limitation — a proper link would require the client
+// to send `deviceId` during /push/subscribe. Tracking v2 will do that.
+adminRouter.post('/push/broadcast-segmented', adminWriteLimiter, requireRole('admin'), async (req, res) => {
+  if (!env.PUSH_VAPID_PUBLIC || !env.PUSH_VAPID_PRIVATE) return res.status(400).json({ error: 'push_disabled' });
+  const title = String(req.body?.title || '').slice(0, 80).trim();
+  const bodyTx = String(req.body?.body || '').slice(0, 200);
+  const urlRaw = String(req.body?.url  || '/').slice(0, 2048);
+  const segment = req.body?.segment || {};
+  if (!title) return res.status(400).json({ error: 'invalid_input' });
+  const safeClickUrl = (urlRaw === '/') ? '/' : (safeUrl(urlRaw) || '/');
+
+  try {
+    // 1. Resolve matching device IDs.
+    const ids = await resolveSegment(segment);
+    if (!ids.length) return res.json({ targeted: 0, sent: 0, failed: 0, pruned: 0 });
+
+    // 2. Prefer deviceId-keyed subscriptions (new clients send it on
+    //    /push/subscribe). Fall back to an ipHash-based proxy join for
+    //    legacy subscriptions created before the deviceId field shipped.
+    const directSubs = await PushSubscription.find({ deviceId: { $in: ids } }).limit(5000).lean();
+    const coveredDevices = new Set(directSubs.map(s => s.deviceId).filter(Boolean));
+    const uncovered = ids.filter(id => !coveredDevices.has(id));
+    let legacySubs = [];
+    if (uncovered.length) {
+      const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+      const ipHashes = await Device.distinct('ipHash', {
+        _id: { $in: uncovered }, lastSeen: { $gte: since }, ipHash: { $ne: '' },
+      });
+      if (ipHashes.length) {
+        legacySubs = await PushSubscription.find({
+          ipHash: { $in: ipHashes },
+          // Don't double-count subs that are already deviceId-linked.
+          $or: [{ deviceId: '' }, { deviceId: { $exists: false } }],
+        }).limit(5000).lean();
+      }
+    }
+    const subs = [...directSubs, ...legacySubs];
+    if (!subs.length) return res.json({ targeted: ids.length, sent: 0, failed: 0, pruned: 0 });
+
+    // 4. Send with timeout + concurrency, same as broadcast.
+    const payload = JSON.stringify({
+      title: safeText(title, 80), body: safeText(bodyTx, 200), url: safeClickUrl,
+    });
+    let sent = 0, failed = 0;
+    const stale = [];
+    const sendOne = async (s) => {
+      try {
+        await withTimeout(
+          webPush.sendNotification({ endpoint: s.endpoint, keys: s.keys }, payload, { TTL: 60 }),
+          PUSH_TIMEOUT_MS,
+        );
+        sent++;
+      } catch (e) {
+        failed++;
+        if (e && (e.statusCode === 404 || e.statusCode === 410)) stale.push(s.endpoint);
+      }
+    };
+    for (let i = 0; i < subs.length; i += PUSH_CONCURRENCY) {
+      await Promise.all(subs.slice(i, i + PUSH_CONCURRENCY).map(sendOne));
+    }
+    if (stale.length) {
+      try { await PushSubscription.deleteMany({ endpoint: { $in: stale } }); } catch {}
+    }
+
+    await AuditLog.create({
+      actorId: req.user.id, actorEmail: req.user.loginId,
+      action: 'push_broadcast_segmented', target: String(sent), outcome: 'success',
+      ipHash: hashIp(req.ip), userAgent: safeText(req.get('user-agent') || '', 200),
+      diff: { title, url: safeClickUrl, targeted: ids.length, sent, failed, pruned: stale.length },
+    });
+    res.json({ targeted: ids.length, sent, failed, pruned: stale.length });
+  } catch (e) {
+    log.warn({ err: e?.message }, 'push_segmented_error');
+    res.status(500).json({ error: 'push_error' });
+  }
+});
+
+// Campaign CRUD — admin saves templates, schedules them, or sends now.
+adminRouter.get('/push/campaigns', requireRole('admin'), async (req, res) => {
+  const rows = await PushCampaign.find({}).sort({ createdAt: -1 }).limit(100).lean();
+  res.json({ rows });
+});
+
+adminRouter.post('/push/campaigns', adminWriteLimiter, requireRole('admin'), async (req, res) => {
+  const { name, title, body, url, segment, sendAt } = req.body || {};
+  if (!name || !title) return res.status(400).json({ error: 'invalid_input' });
+  const doc = await PushCampaign.create({
+    name: String(name).slice(0, 120),
+    title: String(title).slice(0, 120),
+    body: String(body || '').slice(0, 300),
+    url: String(url || '/').slice(0, 512),
+    segment: segment || {},
+    sendAt: sendAt ? new Date(sendAt) : null,
+    status: sendAt ? 'scheduled' : 'draft',
+    createdBy: req.user.id,
+  });
+  await AuditLog.create({
+    actorId: req.user.id, actorEmail: req.user.loginId,
+    action: 'push_campaign_create', target: `campaign:${doc._id}`,
+    ipHash: hashIp(req.ip), userAgent: safeText(req.get('user-agent') || '', 200),
+  });
+  res.json({ id: doc._id });
+});
+
+adminRouter.delete('/push/campaigns/:id', adminWriteLimiter, requireRole('admin'), async (req, res) => {
+  const id = String(req.params.id || '');
+  const r = await PushCampaign.deleteOne({ _id: id });
+  if (!r.deletedCount) return res.status(404).json({ error: 'not_found' });
+  await AuditLog.create({
+    actorId: req.user.id, actorEmail: req.user.loginId,
+    action: 'push_campaign_delete', target: `campaign:${id}`,
+    ipHash: hashIp(req.ip), userAgent: safeText(req.get('user-agent') || '', 200),
+  });
+  res.json({ ok: true });
+});
+
+// Inactive users count + ready-made segment.
+adminRouter.get('/engagement/inactive', requireRole('admin', 'editor'), async (req, res) => {
+  const days = Math.min(90, Math.max(1, parseInt(req.query.days, 10) || 14));
+  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+  const count = await Device.countDocuments({ lastSeen: { $lt: since } });
+  res.json({ days, count });
 });
 
 function slim(doc) {

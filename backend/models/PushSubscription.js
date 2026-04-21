@@ -9,7 +9,11 @@ const PushSubscriptionSchema = new mongoose.Schema({
     auth:   { type: String, required: true, maxlength: 256 },
   },
   userId:   { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
-  ipHash:   { type: String, default: '', maxlength: 24 },
+  // Phase 3: anonymous device link. Lets the push broadcaster resolve
+  // an analytics-segment (Device aggregate query) directly to the
+  // matching subscription endpoints, without a lossy ipHash join.
+  deviceId: { type: String, default: '', maxlength: 40, index: true },
+  ipHash:   { type: String, default: '', maxlength: 24, index: true },
   userAgent:{ type: String, default: '', maxlength: 200 },
   lastSentAt:{ type: Date, default: null },
   failCount:{ type: Number, default: 0 },

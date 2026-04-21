@@ -1,6 +1,6 @@
 // sw.js — Service worker: offline shell + stale-while-revalidate + web push.
 
-const VERSION = 'v48';
+const VERSION = 'v49';
 const SHELL = 'shell-' + VERSION;
 
 // Public-surface JSX only. Admin-only bundles (auth-gate, admin-app,
@@ -79,10 +79,99 @@ function isAdminUrl(pathname) {
       || pathname === '/admin'
       || ADMIN_JSX.has(pathname);
 }
+// ── Offline analytics queue (Phase 4) ─────────────────────────
+// If the client posts to /api/track/event and we're offline (or the
+// request otherwise fails), stash the body in IndexedDB and retry on
+// the next successful fetch of anything. Avoids losing installs /
+// clicks / session ends when network flaps during travel, subway, etc.
+const OFFLINE_DB = 'hof-offline-v1';
+const OFFLINE_STORE = 'track-queue';
+function idbOpen() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(OFFLINE_DB, 1);
+    req.onupgradeneeded = () => req.result.createObjectStore(OFFLINE_STORE, { autoIncrement: true });
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+async function queuePush(body, endpointPath) {
+  try {
+    const db = await idbOpen();
+    await new Promise((ok, ng) => {
+      const tx = db.transaction(OFFLINE_STORE, 'readwrite');
+      tx.objectStore(OFFLINE_STORE).add({ body, endpointPath, at: Date.now() });
+      tx.oncomplete = ok; tx.onerror = () => ng(tx.error);
+    });
+  } catch {}
+}
+async function drainQueue() {
+  try {
+    const db = await idbOpen();
+    const rows = await new Promise((ok, ng) => {
+      const tx = db.transaction(OFFLINE_STORE, 'readonly');
+      const req = tx.objectStore(OFFLINE_STORE).openCursor();
+      const out = [];
+      req.onsuccess = e => {
+        const cur = e.target.result;
+        if (cur) { out.push({ key: cur.key, value: cur.value }); cur.continue(); }
+        else ok(out);
+      };
+      req.onerror = () => ng(req.error);
+    });
+    for (const r of rows) {
+      try {
+        await fetch(r.value.endpointPath || '/api/track/event', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: r.value.body,
+        });
+        // Delete on success.
+        await new Promise((ok, ng) => {
+          const tx = db.transaction(OFFLINE_STORE, 'readwrite');
+          tx.objectStore(OFFLINE_STORE).delete(r.key);
+          tx.oncomplete = ok; tx.onerror = () => ng(tx.error);
+        });
+      } catch {
+        // Still offline — bail and try on the next online event.
+        return;
+      }
+    }
+  } catch {}
+}
+self.addEventListener('online', () => { drainQueue().catch(() => {}); });
+
 self.addEventListener('fetch', (event) => {
   const req = event.request;
-  if (req.method !== 'GET') return;
   const url = new URL(req.url);
+
+  // Phase 4: queue failed /api/track/event POSTs instead of losing them.
+  // Admin writes (PATCH /api/admin/config etc.) still pass through
+  // normally — only the public tracking endpoint is queued.
+  if (req.method === 'POST' && (
+    url.pathname === '/api/track/event' ||
+    url.pathname === '/api/track/error'
+  )) {
+    event.respondWith((async () => {
+      try {
+        const res = await fetch(req.clone());
+        // Opportunistic drain on every successful track call — a send
+        // that worked means the network is probably back.
+        if (res.ok) drainQueue().catch(() => {});
+        return res;
+      } catch {
+        try {
+          const body = await req.clone().text();
+          await queuePush(body, url.pathname);
+        } catch {}
+        // 204 so the client treats the beacon as delivered — it is,
+        // from the client's perspective; we'll retry transparently.
+        return new Response(null, { status: 204 });
+      }
+    })());
+    return;
+  }
+
+  if (req.method !== 'GET') return;
   if (url.pathname.startsWith('/api/')) return;
   if (url.pathname.startsWith('/uploads/')) return;
   if (url.pathname.startsWith('/media/')) return;
@@ -138,6 +227,34 @@ self.addEventListener('push', (event) => {
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
   const url = (event.notification.data && event.notification.data.url) || '/';
+  // Phase 3 push CTR: fire a push_click event to /api/track/event.
+  // We don't know the deviceId here (SW has no access to localStorage)
+  // so rely on a ?c=<campaignId> query param that scheduledPush.js
+  // appends on send. The landing page picks it up and re-emits as
+  // push_click with its own deviceId (handled in tracking.jsx
+  // install() → captureSourceContext). Belt-and-braces: also fire a
+  // device-less beacon so we at least count CTR even when the browser
+  // tab doesn't open.
+  let campaign = '';
+  try { campaign = new URL(url, self.location.origin).searchParams.get('c') || ''; } catch {}
+  if (campaign) {
+    event.waitUntil((async () => {
+      try {
+        // The SW can't use window.API_BASE — rely on same-origin fetch
+        // when on web, and fall through silently on the APK (Capacitor
+        // WebView has a separate tracking path through the landing page).
+        await fetch('/api/track/event', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            deviceId: 'sw-' + campaign.slice(0, 32),  // synthetic, just for count
+            events: [{ type: 'push_click', target: campaign }],
+            platform: 'web', appVersion: '',
+          }),
+        }).catch(() => {});
+      } catch {}
+    })());
+  }
   event.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(clients => {
       for (const c of clients) {

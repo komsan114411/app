@@ -174,6 +174,22 @@ const api = {
   },
   async getAttribution(days = 30)       { return request(`/api/admin/attribution?days=${days}`, { auth: true }); },
   async getRecentErrors(days = 7)       { return request(`/api/admin/errors/recent?days=${days}`, { auth: true }); },
+  async getCohorts(weeks = 8)           { return request(`/api/admin/retention/cohorts?weeks=${weeks}`, { auth: true }); },
+  async getSessions(days = 7)           { return request(`/api/admin/sessions/summary?days=${days}`, { auth: true }); },
+  async getTimeToFirst(days = 7)        { return request(`/api/admin/time-to-first?days=${days}`, { auth: true }); },
+  async getExits(days = 30)             { return request(`/api/admin/exits?days=${days}`, { auth: true }); },
+  // Phase 3: re-engagement
+  async previewSegment(segment)         { return request('/api/admin/push/segment/preview', { method: 'POST', body: { segment }, auth: true }); },
+  async broadcastSegmented(body)        { return request('/api/admin/push/broadcast-segmented', { method: 'POST', body, auth: true }); },
+  async listCampaigns()                 { return request('/api/admin/push/campaigns', { auth: true }); },
+  async createCampaign(body)            { return request('/api/admin/push/campaigns', { method: 'POST', body, auth: true }); },
+  async deleteCampaign(id)              { return request(`/api/admin/push/campaigns/${encodeURIComponent(id)}`, { method: 'DELETE', auth: true }); },
+  async getInactive(days = 14)          { return request(`/api/admin/engagement/inactive?days=${days}`, { auth: true }); },
+  // Phase 5: advanced
+  async getSignificance(id, days = 30)  { return request(`/api/admin/analytics/button/${encodeURIComponent(id)}/significance?days=${days}`, { auth: true }); },
+  async getSankey(days = 30)            { return request(`/api/admin/sankey?days=${days}`, { auth: true }); },
+  async getAnomaly()                    { return request('/api/admin/anomaly', { auth: true }); },
+  async getGeoLocale(days = 30)         { return request(`/api/admin/geo/locale?days=${days}`, { auth: true }); },
   async getAudit(opts = {}) {
     const q = new URLSearchParams({ limit: String(opts.limit || 50) });
     if (opts.cursor) q.set('cursor', opts.cursor);
@@ -211,7 +227,14 @@ const api = {
 
   // Push notifications
   async vapidKey()               { return request('/api/push/vapid-key'); },
-  async subscribePush(sub)       { return request('/api/push/subscribe', { method: 'POST', body: sub }); },
+  async subscribePush(sub) {
+    // Attach the anonymous deviceId (if tracking is enabled) so the
+    // admin push segmenter can resolve a Device query directly to
+    // subscription endpoints instead of the lossy ipHash join.
+    let deviceId = '';
+    try { deviceId = (window.tracking && window.tracking.getDeviceId && window.tracking.getDeviceId()) || ''; } catch {}
+    return request('/api/push/subscribe', { method: 'POST', body: { ...sub, deviceId } });
+  },
   async broadcastPush(body)      { return request('/api/admin/push/broadcast', { method: 'POST', body, auth: true }); },
 
   // Escape hatch

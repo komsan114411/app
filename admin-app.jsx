@@ -19,6 +19,7 @@ function AdminShell({ state, setState, onPreview, liveMode, authed, onLogout, me
     { id: 'theme',   label: 'ธีม & แบรนด์', icon: 'settings' },
   ];
   const adminOnlyTabs = liveMode ? [
+    { id: 'analytics', label: 'การติดตาม', icon: 'chart' },
     { id: 'security', label: 'ความปลอดภัย', icon: 'settings' },
     ...(isAdmin ? [
       { id: 'users', label: 'ผู้ดูแล', icon: 'heart' },
@@ -130,6 +131,7 @@ function AdminShell({ state, setState, onPreview, liveMode, authed, onLogout, me
         {tab === 'contact'  && <ContactEditor state={state} setState={setState}/>}
         {tab === 'download' && typeof DownloadLinksEditor === 'function' && <DownloadLinksEditor state={state} setState={setState}/>}
         {tab === 'theme'    && <ThemeEditor state={state} setState={setState}/>}
+        {tab === 'analytics' && typeof AnalyticsTab === 'function' && <AnalyticsTab/>}
         {tab === 'security' && typeof SecurityTab === 'function' && <SecurityTab onLogout={onLogout} mustChange={mustChange} onPasswordChanged={onPasswordChanged} me={me} onMeRefresh={onMeRefresh}/>}
         {tab === 'users'    && typeof UsersTab    === 'function' && <UsersTab currentUserId={me && me.id}/>}
         {tab === 'audit'    && typeof AuditTab    === 'function' && <AuditTab/>}

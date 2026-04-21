@@ -119,6 +119,20 @@ function captureSourceContext() {
       const { medium } = detectPlatform();
       if (medium) _ls('set', MEDIUM_KEY, medium);
     }
+
+    // Phase 3 push CTR: if we landed here with ?c=<campaignId>, this
+    // open is attributable to that push. Fire push_click so the admin
+    // can measure campaign performance. Scrub the param so subsequent
+    // refreshes don't double-count.
+    const c = qs.get('c');
+    if (c && /^[A-Za-z0-9_-]{8,40}$/.test(c)) {
+      enqueue('push_click', { target: c });
+      try {
+        qs.delete('c');
+        const clean = location.pathname + (qs.toString() ? ('?' + qs.toString()) : '') + (location.hash || '');
+        history.replaceState({}, '', clean);
+      } catch {}
+    }
   } catch {}
 }
 
@@ -262,6 +276,54 @@ function reportError(message, url = '') {
   } catch {}
 }
 
+// ── Web Vitals (Phase 4) ───────────────────────────────────────
+// Minimal Core Web Vitals reporter — LCP, FID-ish, CLS. Avoids the
+// web-vitals npm dependency; uses the PerformanceObserver API directly.
+// Reports once per session when the page is backgrounded (the only
+// moment values are final for LCP / CLS).
+let _lcp = 0;
+let _cls = 0;
+let _fid = 0;
+let _vitalsReported = false;
+
+function installVitals() {
+  if (typeof PerformanceObserver === 'undefined') return;
+  try {
+    new PerformanceObserver((list) => {
+      for (const entry of list.getEntries()) {
+        _lcp = Math.max(_lcp, entry.renderTime || entry.loadTime || entry.startTime);
+      }
+    }).observe({ type: 'largest-contentful-paint', buffered: true });
+  } catch {}
+  try {
+    new PerformanceObserver((list) => {
+      for (const entry of list.getEntries()) {
+        if (!entry.hadRecentInput) _cls += entry.value;
+      }
+    }).observe({ type: 'layout-shift', buffered: true });
+  } catch {}
+  try {
+    new PerformanceObserver((list) => {
+      for (const entry of list.getEntries()) {
+        if (!_fid) _fid = entry.processingStart - entry.startTime;
+      }
+    }).observe({ type: 'first-input', buffered: true });
+  } catch {}
+}
+
+function reportVitalsOnce() {
+  if (_vitalsReported) return;
+  _vitalsReported = true;
+  // Values expressed as durationMs on a screen_view event so it rides
+  // the existing EventLog pipeline without a new endpoint. label=Web
+  // Vitals, target encodes the metric name + value.
+  try {
+    if (_lcp > 0) enqueue('screen_view', { target: 'web_vitals:lcp', label: String(Math.round(_lcp)), durationMs: Math.round(_lcp) });
+    if (_fid > 0) enqueue('screen_view', { target: 'web_vitals:fid', label: String(Math.round(_fid)), durationMs: Math.round(_fid) });
+    if (_cls > 0) enqueue('screen_view', { target: 'web_vitals:cls', label: _cls.toFixed(3),          durationMs: Math.round(_cls * 1000) });
+  } catch {}
+}
+
 // ── Wire up browser lifecycle once ─────────────────────────────
 function install() {
   if (typeof window === 'undefined' || window.__tracking_installed) return;
@@ -270,10 +332,14 @@ function install() {
   // Capture attribution FIRST so the first event carries it.
   captureSourceContext();
 
-  // Emit the final session_end + flush anything queued when the user
-  // closes / backgrounds the tab.
-  window.addEventListener('pagehide',     () => { endSession('pagehide'); _beaconFlush(); });
-  window.addEventListener('beforeunload', () => { _beaconFlush(); });
+  // Web Vitals observers spin up now so LCP/CLS/FID have the whole
+  // session to collect entries.
+  installVitals();
+
+  // Emit the final session_end + Web Vitals + flush anything queued
+  // when the user closes / backgrounds the tab.
+  window.addEventListener('pagehide',     () => { reportVitalsOnce(); endSession('pagehide'); _beaconFlush(); });
+  window.addEventListener('beforeunload', () => { reportVitalsOnce(); _beaconFlush(); });
 
   // Session idle: if the tab goes hidden for more than SESSION_IDLE_MS
   // we close the current session. Coming back creates a new one.

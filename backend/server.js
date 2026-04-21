@@ -629,6 +629,22 @@ async function ensureBootstrapped() {
 export async function boot() {
   await connectDB();
   await ensureBootstrapped();
+  // Phase 3: start the scheduled push campaign worker. Safe to call
+  // whether or not VAPID is configured — the tick short-circuits when
+  // push is disabled.
+  try {
+    const { startScheduledPushWorker } = await import('./utils/scheduledPush.js');
+    startScheduledPushWorker();
+  } catch (e) {
+    log.warn({ err: e?.message }, 'scheduled_push_worker_unavailable');
+  }
+  // Phase 5: daily digest email to admins. No-op if SMTP isn't set.
+  try {
+    const { startDailyDigest } = await import('./utils/dailyDigest.js');
+    startDailyDigest();
+  } catch (e) {
+    log.warn({ err: e?.message }, 'daily_digest_unavailable');
+  }
   const server = app.listen(env.PORT, () => {
     log.info({ port: env.PORT, env: env.NODE_ENV }, 'server_listening');
   });

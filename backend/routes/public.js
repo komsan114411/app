@@ -404,6 +404,10 @@ publicRouter.post('/push/subscribe', publicReadLimiter, async (req, res) => {
   const { endpoint, keys } = req.body || {};
   if (!isAllowedPushEndpoint(endpoint)) return res.status(400).json({ error: 'invalid_endpoint' });
   if (!keys || typeof keys !== 'object' || !keys.p256dh || !keys.auth) return res.status(400).json({ error: 'invalid' });
+  // Phase 3: accept an optional deviceId so the admin can resolve a
+  // push segment directly to subscription endpoints without going
+  // through the ipHash proxy join.
+  const deviceId = validateDeviceId((req.body && req.body.deviceId) || req.get('x-device'));
   try {
     await PushSubscription.updateOne(
       { endpoint },
@@ -412,6 +416,7 @@ publicRouter.post('/push/subscribe', publicReadLimiter, async (req, res) => {
           endpoint, keys: { p256dh: String(keys.p256dh).slice(0, 256), auth: String(keys.auth).slice(0, 256) },
           ipHash: hashIp(req.ip),
           userAgent: safeText(req.get('user-agent') || '', 200),
+          ...(deviceId ? { deviceId } : {}),
         },
       },
       { upsert: true },
