@@ -1,101 +1,8 @@
-// push-setup.jsx — Web Push subscription UI (user-facing button)
-// and admin broadcast form.
-
-function urlBase64ToUint8Array(base64String) {
-  const padding = '='.repeat((4 - base64String.length % 4) % 4);
-  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
-  const raw = atob(base64);
-  const arr = new Uint8Array(raw.length);
-  for (let i = 0; i < raw.length; i++) arr[i] = raw.charCodeAt(i);
-  return arr;
-}
-
-// ─── User-facing subscribe button ────────────────────────────
-function PushSubscribeButton({ theme }) {
-  const [state, setState] = React.useState('idle'); // idle | subscribed | denied | unsupported | unavailable | busy
-  const [error, setError] = React.useState(null);
-
-  React.useEffect(() => {
-    (async () => {
-      if (typeof Notification === 'undefined' || !('serviceWorker' in navigator) || !('PushManager' in window)) {
-        setState('unsupported'); return;
-      }
-      try {
-        const cfg = await api.getConfig();
-        if (!cfg?.capabilities?.pushNotifications) { setState('unavailable'); return; }
-      } catch {}
-      if (Notification.permission === 'denied') { setState('denied'); return; }
-      try {
-        const reg = await navigator.serviceWorker.ready;
-        const sub = await reg.pushManager.getSubscription();
-        if (sub) setState('subscribed');
-      } catch {}
-    })();
-  }, []);
-
-  const subscribe = async () => {
-    setError(null);
-    setState('busy');
-    try {
-      const perm = await Notification.requestPermission();
-      if (perm !== 'granted') { setState(perm === 'denied' ? 'denied' : 'idle'); return; }
-      const { publicKey } = await api.vapidKey();
-      if (!publicKey) { setState('unavailable'); return; }
-      const reg = await navigator.serviceWorker.ready;
-      const sub = await reg.pushManager.subscribe({
-        userVisibleOnly: true,
-        applicationServerKey: urlBase64ToUint8Array(publicKey),
-      });
-      const json = sub.toJSON();
-      await api.subscribePush({ endpoint: json.endpoint, keys: json.keys });
-      setState('subscribed');
-    } catch (e) {
-      setError(e.message || 'subscribe_failed');
-      setState('idle');
-    }
-  };
-
-  const unsubscribe = async () => {
-    setState('busy');
-    try {
-      const reg = await navigator.serviceWorker.ready;
-      const sub = await reg.pushManager.getSubscription();
-      if (sub) await sub.unsubscribe();
-      setState('idle');
-    } catch { setState('idle'); }
-  };
-
-  // Hide completely if not supported or feature disabled on server
-  if (state === 'unsupported' || state === 'unavailable') return null;
-
-  const surface = theme?.surface || '#fff';
-  const ink = theme?.ink || '#1F1B17';
-  const border = theme?.border || 'rgba(0,0,0,0.12)';
-
-  return (
-    <div style={{
-      margin: '0 16px 12px', padding: '10px 14px', borderRadius: 12,
-      background: surface, border: `1px solid ${border}`,
-      display: 'flex', alignItems: 'center', gap: 10, color: ink, fontSize: 12,
-    }}>
-      <Icon name="bell" size={16} stroke={1.8}/>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        {state === 'subscribed' && <span>รับการแจ้งเตือนอยู่ · <button onClick={unsubscribe} style={inlineBtn}>ยกเลิก</button></span>}
-        {state === 'denied' && <span style={{ opacity: 0.7 }}>การแจ้งเตือนถูกบล็อก — เปิดใน Setting เบราว์เซอร์</span>}
-        {state === 'idle' && <span>รับข่าวสาร/โปรโมชั่นใหม่ผ่านการแจ้งเตือน</span>}
-        {state === 'busy' && <span>กำลังดำเนินการ…</span>}
-        {error && <div style={{ color: '#B4463A', fontSize: 11, marginTop: 3 }}>เกิดข้อผิดพลาด: {error}</div>}
-      </div>
-      {state === 'idle' && (
-        <button onClick={subscribe} style={{
-          padding: '6px 12px', borderRadius: 8, border: 'none',
-          background: ink, color: surface, fontSize: 11, fontWeight: 600,
-          cursor: 'pointer', fontFamily: 'inherit',
-        }}>เปิดการแจ้งเตือน</button>
-      )}
-    </div>
-  );
-}
+// push-setup.jsx — Admin-only broadcast form. The user-facing
+// subscribe button lives in push-subscribe.jsx (shipped to the APK
+// via mobile/scripts/prepare-web.js). This file is web-only and
+// not included in the APK bundle, since admin endpoints are
+// unreachable from the Capacitor WebView anyway.
 
 // ─── Admin: broadcast push notification form ─────────────────
 function PushBroadcastCard() {
@@ -220,5 +127,6 @@ const inlineBtn = {
   textDecoration: 'underline', cursor: 'pointer', fontFamily: 'inherit', fontSize: 12, padding: 0,
 };
 
-window.PushSubscribeButton = PushSubscribeButton;
+// PushSubscribeButton now lives in push-subscribe.jsx — it loads
+// earlier in index.html so user-app.jsx finds it.
 window.PushBroadcastCard = PushBroadcastCard;

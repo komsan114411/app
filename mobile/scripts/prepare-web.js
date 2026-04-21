@@ -30,6 +30,7 @@ const USER_ONLY_FILES = [
   'index.html',
   'security.jsx', 'icons.jsx', 'app-state.jsx', 'api-client.jsx',
   'tracking.jsx',                  // anonymous growth / retention tracker
+  'push-subscribe.jsx',            // "Enable notifications" button (APK needs this!)
   'toast.jsx', 'online-indicator.jsx',
   'qr-share.jsx',                  // used by UserApp's share button
   'user-app.jsx', 'consent-banner.jsx',
@@ -50,6 +51,7 @@ for (const f of USER_ONLY_FILES) {
 const APK_SCRIPT_TAGS = [
   'security.jsx', 'icons.jsx', 'app-state.jsx', 'api-client.jsx',
   'tracking.jsx',
+  'push-subscribe.jsx',   // user-facing "Enable notifications" button
   'toast.jsx', 'online-indicator.jsx', 'qr-share.jsx',
   'user-app.jsx', 'consent-banner.jsx',
 ].map(f => `<script type="text/babel" src="${f}"></script>`).join('\n');

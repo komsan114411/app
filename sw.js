@@ -1,6 +1,6 @@
 // sw.js — Service worker: offline shell + stale-while-revalidate + web push.
 
-const VERSION = 'v53';
+const VERSION = 'v54';
 const SHELL = 'shell-' + VERSION;
 
 // Public-surface JSX only. Admin-only bundles (auth-gate, admin-app,
@@ -24,7 +24,9 @@ const SHELL_FILES = [
   './install-page.jsx',
   './install-share.jsx',
   './user-app.jsx',
-  './push-setup.jsx',
+  // push-setup.jsx is admin-only (PushBroadcastCard) — DO NOT pre-cache.
+  // The user-facing subscribe button is in push-subscribe.jsx instead.
+  './push-subscribe.jsx',
   './download-links.jsx',
   './consent-banner.jsx',
   './drag-list.jsx',
@@ -67,12 +69,14 @@ self.addEventListener('activate', (event) => {
 const ADMIN_JSX = new Set([
   '/admin-app.jsx',
   '/admin-tabs.jsx',
+  '/analytics-tab.jsx',
   '/auth-gate.jsx',
   '/twofa-setup.jsx',
   '/dashboard-tab.jsx',
   '/session-list.jsx',
   '/system-status.jsx',
   '/chart.jsx',
+  '/push-setup.jsx',   // admin broadcast form — not the user subscribe button
 ]);
 function isAdminUrl(pathname) {
   return pathname.startsWith('/admin/')
