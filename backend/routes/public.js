@@ -10,6 +10,8 @@ import { EventLog, EVENT_TYPES } from '../models/EventLog.js';
 import { PushCampaign } from '../models/PushCampaign.js';
 import { getPublicKey, isConfigured as isPushConfigured } from '../utils/vapid.js';
 import { isAllowedPushEndpoint } from '../utils/pushAllowlist.js';
+import webPush from 'web-push';
+import { log } from '../utils/logger.js';
 import mongoose from 'mongoose';
 import { publicReadLimiter, trackLimiter } from '../middleware/rateLimit.js';
 import { validate, trackBody } from '../middleware/validate.js';
@@ -445,4 +447,62 @@ publicRouter.post('/push/subscribe', publicReadLimiter, async (req, res) => {
     log.warn({ err: e?.message, endpointHost }, 'push_subscribe_failed');
   }
   res.status(204).end();
+});
+
+// ─── Self-test push endpoint ─────────────────────────────────────
+// The user's subscribe button calls this right after a successful
+// subscribe so we prove end-to-end delivery to THIS device and give
+// the user actionable feedback if any layer breaks.
+//
+// Flow: client POSTs { endpoint, keys, deviceId?, clientInfo? }
+//   → server validates VAPID is configured
+//   → validates endpoint allowlist
+//   → sends a tiny encrypted payload via web-push
+//   → captures statusCode/body on failure
+//   → returns { ok: bool, statusCode?, reason?, elapsedMs }
+//
+// This is the ONLY endpoint where we send on behalf of an un-
+// authenticated caller, so it's rate-limited tightly (publicReadLimiter
+// caps at ~5 req/sec/IP) and the recipient is whoever's keys were
+// supplied — you can't target someone else's subscription because you
+// need BOTH the endpoint AND matching keys.
+publicRouter.post('/push/test', publicReadLimiter, async (req, res) => {
+  if (!isPushConfigured()) {
+    return res.status(400).json({ ok: false, reason: 'vapid_not_configured' });
+  }
+  const { endpoint, keys } = req.body || {};
+  if (!isAllowedPushEndpoint(endpoint)) {
+    return res.status(400).json({ ok: false, reason: 'invalid_endpoint' });
+  }
+  if (!keys || typeof keys !== 'object' || !keys.p256dh || !keys.auth) {
+    return res.status(400).json({ ok: false, reason: 'invalid_keys' });
+  }
+  let endpointHost = 'unknown';
+  try { endpointHost = new URL(endpoint).host; } catch {}
+  const payload = JSON.stringify({
+    title: '🔔 ทดสอบการแจ้งเตือน',
+    body: 'ถ้าเห็นข้อความนี้ ระบบ push พร้อมใช้งานแล้ว',
+    url: '/',
+    tag: 'hof88-selftest',
+  });
+  const t0 = Date.now();
+  try {
+    await webPush.sendNotification({ endpoint, keys }, payload, { TTL: 60 });
+    const elapsed = Date.now() - t0;
+    log.info({ endpointHost, elapsedMs: elapsed }, 'push_selftest_ok');
+    res.json({ ok: true, elapsedMs: elapsed });
+  } catch (e) {
+    const sc = e && e.statusCode;
+    const body = (e && e.body) ? String(e.body).slice(0, 300) : '';
+    log.warn({ endpointHost, statusCode: sc, err: e?.message?.slice(0, 200), body }, 'push_selftest_failed');
+    // Human-readable reason based on status code
+    let reason = 'send_failed';
+    if (sc === 403)      reason = 'vapid_mismatch (subscription bound to different VAPID keypair — resubscribe)';
+    else if (sc === 404 || sc === 410) reason = 'subscription_expired (re-subscribe)';
+    else if (sc === 413) reason = 'payload_too_large';
+    else if (sc === 429) reason = 'push_service_rate_limited';
+    else if (sc >= 500)  reason = 'push_service_error_' + sc;
+    else if (!sc)        reason = 'network_or_timeout';
+    res.status(200).json({ ok: false, statusCode: sc || null, reason, elapsedMs: Date.now() - t0 });
+  }
 });

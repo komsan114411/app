@@ -23,8 +23,12 @@ function urlBase64ToUint8Array(base64String) {
 }
 
 function PushSubscribeButton({ theme }) {
-  const [state, setState] = React.useState('idle'); // idle | subscribed | denied | unsupported | unavailable | busy
+  const [state, setState] = React.useState('idle'); // idle | subscribed | denied | unsupported | unavailable | busy | testing
   const [error, setError] = React.useState(null);
+  // Step-by-step diagnostic. Each string describes what just ran.
+  const [steps, setSteps] = React.useState([]);
+  const [showDiag, setShowDiag] = React.useState(false);
+  const pushStep = (s) => setSteps(prev => [...prev, { at: Date.now(), msg: s }]);
 
   React.useEffect(() => {
     (async () => {
@@ -44,47 +48,106 @@ function PushSubscribeButton({ theme }) {
     })();
   }, []);
 
+  // Full subscribe + self-test flow. Every step pushes a visible
+  // log entry so if something fails the user sees the exact layer.
   const subscribe = async () => {
     setError(null);
+    setSteps([]);
     setState('busy');
+    setShowDiag(true);
+    pushStep('1. requestPermission() — รอ Android dialog');
     try {
-      // Permission — Android 13+ WebView dialog is silently suppressed
-      // if POST_NOTIFICATIONS isn't declared in AndroidManifest (fixed
-      // in apply-hardening.js). If this returns 'default' on a phone,
-      // the manifest permission is missing → user must reinstall a
-      // rebuilt APK.
       const perm = await Notification.requestPermission();
+      pushStep(`   → perm = "${perm}"`);
       if (perm !== 'granted') {
         if (perm === 'default') {
-          // Silent suppression — no "Allow/Deny" dialog ever appeared.
-          setError('permission_dialog_suppressed — ตรวจว่า APK เวอร์ชันล่าสุดมี POST_NOTIFICATIONS permission');
+          setError('permission_dialog_suppressed — APK ขาด POST_NOTIFICATIONS · ต้อง uninstall + ติดตั้งใหม่');
+          pushStep('   ✗ dialog ถูก suppress · APK เก่าหรือ permission ไม่ได้ฝัง');
+        } else {
+          pushStep(`   ✗ user ${perm}`);
         }
         setState(perm === 'denied' ? 'denied' : 'idle');
         return;
       }
+
+      pushStep('2. GET /api/push/vapid-key');
       const { publicKey } = await api.vapidKey();
-      if (!publicKey) { setState('unavailable'); return; }
+      if (!publicKey) {
+        setError('vapid_key_missing — backend ยังไม่ generate VAPID');
+        pushStep('   ✗ publicKey เป็น empty');
+        setState('unavailable'); return;
+      }
+      pushStep(`   ✓ publicKey (${publicKey.length} chars) · prefix ${publicKey.slice(0, 16)}…`);
+
+      pushStep('3. navigator.serviceWorker.ready');
       const reg = await navigator.serviceWorker.ready;
+      pushStep(`   ✓ SW scope ${reg.scope}`);
+
+      pushStep('4. pushManager.subscribe() — ติดต่อ push service');
       const sub = await reg.pushManager.subscribe({
         userVisibleOnly: true,
         applicationServerKey: urlBase64ToUint8Array(publicKey),
       });
       const json = sub.toJSON();
+      let host = 'unknown';
+      try { host = new URL(json.endpoint).host; } catch {}
+      pushStep(`   ✓ endpoint host: ${host}`);
+
+      pushStep('5. POST /api/push/subscribe — บันทึก endpoint');
       await api.subscribePush({ endpoint: json.endpoint, keys: json.keys });
+      pushStep('   ✓ 204 (stored)');
+
+      pushStep('6. POST /api/push/test — self-test delivery');
+      setState('testing');
+      const testResult = await api.testPush({ endpoint: json.endpoint, keys: json.keys });
+      if (testResult.ok) {
+        pushStep(`   ✓ ส่งผ่าน ${testResult.elapsedMs}ms · รอ notification…`);
+        pushStep('7. ถ้า notification ไม่เด้งใน 10 วิ = WebView block notification (ดู Android Settings → Apps → HOF88 → Notifications)');
+      } else {
+        pushStep(`   ✗ reason: ${testResult.reason} (status ${testResult.statusCode ?? 'n/a'})`);
+        setError(`test_send_failed: ${testResult.reason}`);
+      }
       setState('subscribed');
     } catch (e) {
-      // Common failure classes to surface distinctly so the user can
-      // tell "system blocked me" from "network down" from
-      // "VAPID mismatch":
-      //   NotAllowedError   — permission not granted or OS blocks
-      //   AbortError        — push service unreachable
-      //   InvalidStateError — browser in odd state, often retry works
-      //   TypeError         — applicationServerKey invalid
       const name = (e && e.name) || '';
       const msg  = (e && e.message) || 'subscribe_failed';
       setError(name ? `${name}: ${msg}` : msg);
+      pushStep(`   ✗ exception: ${name || 'Error'}: ${msg}`);
       try { console.warn('[push] subscribe failed:', name, msg, e); } catch {}
       setState('idle');
+    }
+  };
+
+  // Manual self-test for an already-subscribed device. Runs on demand
+  // so user can verify delivery after the initial subscribe without
+  // having to unsubscribe/resubscribe.
+  const runSelfTest = async () => {
+    setError(null);
+    setSteps([]);
+    setShowDiag(true);
+    pushStep('Self-test: ตรวจ subscription ที่มีอยู่');
+    try {
+      const reg = await navigator.serviceWorker.ready;
+      const sub = await reg.pushManager.getSubscription();
+      if (!sub) {
+        pushStep('   ✗ ไม่มี subscription · กด "เปิดแจ้งเตือน" ก่อน');
+        setError('no_subscription');
+        return;
+      }
+      const json = sub.toJSON();
+      pushStep(`   ✓ endpoint host: ${(()=>{try{return new URL(json.endpoint).host}catch{return 'unknown'}})()}`);
+      pushStep('Sending self-test…');
+      const r = await api.testPush({ endpoint: json.endpoint, keys: json.keys });
+      if (r.ok) {
+        pushStep(`   ✓ backend → push service ผ่าน ${r.elapsedMs}ms`);
+        pushStep('   รอ notification ที่ OS ตัวเอง ถ้าไม่เด้งใน 10 วิ = ปัญหาในชั้น OS/Android (app permission ถูกปิด)');
+      } else {
+        pushStep(`   ✗ ${r.reason} (status ${r.statusCode ?? '—'})`);
+        setError(`${r.reason}`);
+      }
+    } catch (e) {
+      pushStep(`   ✗ exception: ${e.message || e.name}`);
+      setError(e.message || 'selftest_failed');
     }
   };
 
@@ -110,45 +173,76 @@ function PushSubscribeButton({ theme }) {
   const border = t.border || 'rgba(0,0,0,0.06)';
 
   return (
-    <div style={{ padding: '14px 16px', borderRadius: 14,
-      background: surface, border: `1px solid ${border}`,
-      margin: '8px 16px 14px', display: 'flex', gap: 10, alignItems: 'center' }}>
-      <div style={{
-        width: 36, height: 36, borderRadius: 10,
-        background: `${accent}20`, color: accent,
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        fontSize: 18, flexShrink: 0,
-      }}>🔔</div>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: 13, fontWeight: 600, color: ink }}>
-          {state === 'subscribed' ? 'เปิดการแจ้งเตือนอยู่'
-            : state === 'denied'  ? 'การแจ้งเตือนถูกบล็อก'
-            : 'รับการแจ้งเตือน'}
+    <div style={{ margin: '8px 16px 14px' }}>
+      <div style={{ padding: '14px 16px', borderRadius: 14,
+        background: surface, border: `1px solid ${border}`,
+        display: 'flex', gap: 10, alignItems: 'center' }}>
+        <div style={{
+          width: 36, height: 36, borderRadius: 10,
+          background: `${accent}20`, color: accent,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          fontSize: 18, flexShrink: 0,
+        }}>🔔</div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: ink }}>
+            {state === 'subscribed' ? 'เปิดการแจ้งเตือนอยู่'
+              : state === 'denied'  ? 'การแจ้งเตือนถูกบล็อก'
+              : state === 'testing' ? 'กำลังทดสอบ…'
+              : 'รับการแจ้งเตือน'}
+          </div>
+          <div style={{ fontSize: 11, color: muted, marginTop: 2, lineHeight: 1.45 }}>
+            {state === 'subscribed' ? 'กด "ทดสอบ" เพื่อเช็คว่าแจ้งเตือนถึงเครื่องจริง'
+              : state === 'denied'  ? 'เปิดจาก Android Settings → Apps → HOF88 → Notifications'
+              : state === 'testing' ? 'รอผลการส่ง…'
+              : 'กดเปิดเพื่อรับข่าวสารจากแอดมิน'}
+          </div>
+          {error && <div style={{ fontSize: 10, color: '#B4463A', marginTop: 3, wordBreak: 'break-word' }}>Error: {error}</div>}
         </div>
-        <div style={{ fontSize: 11, color: muted, marginTop: 2, lineHeight: 1.45 }}>
-          {state === 'subscribed' ? 'จะได้ข้อความจากแอดมินแม้ไม่เปิดแอป'
-            : state === 'denied'  ? 'เปิดจาก Settings ของเบราว์เซอร์'
-            : 'กดเปิดเพื่อรับข่าวสารจากแอดมิน'}
-        </div>
-        {error && <div style={{ fontSize: 10, color: '#B4463A', marginTop: 3 }}>Error: {error}</div>}
+        {state === 'idle' && (
+          <button onClick={subscribe} disabled={state === 'busy'} style={{
+            padding: '8px 14px', borderRadius: 9, border: 'none',
+            background: accent, color: accentInk,
+            fontFamily: 'inherit', fontSize: 12, fontWeight: 600,
+            cursor: 'pointer', whiteSpace: 'nowrap',
+          }}>เปิดแจ้งเตือน</button>
+        )}
+        {(state === 'busy' || state === 'testing') && (
+          <span style={{ fontSize: 11, color: muted }}>กำลังตั้งค่า…</span>
+        )}
+        {state === 'subscribed' && (
+          <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+            <button onClick={runSelfTest} style={{
+              padding: '7px 12px', borderRadius: 9, border: 'none',
+              background: accent, color: accentInk,
+              fontFamily: 'inherit', fontSize: 11, cursor: 'pointer', whiteSpace: 'nowrap',
+            }}>ทดสอบ</button>
+            <button onClick={unsubscribe} style={{
+              padding: '7px 12px', borderRadius: 9,
+              border: `1px solid ${border}`, background: surface, color: muted,
+              fontFamily: 'inherit', fontSize: 11, cursor: 'pointer', whiteSpace: 'nowrap',
+            }}>ปิด</button>
+          </div>
+        )}
       </div>
-      {state === 'idle' && (
-        <button onClick={subscribe} disabled={state === 'busy'} style={{
-          padding: '8px 14px', borderRadius: 9, border: 'none',
-          background: accent, color: accentInk,
-          fontFamily: 'inherit', fontSize: 12, fontWeight: 600,
-          cursor: 'pointer', whiteSpace: 'nowrap',
-        }}>เปิดแจ้งเตือน</button>
-      )}
-      {state === 'busy' && (
-        <span style={{ fontSize: 11, color: muted }}>กำลังตั้งค่า…</span>
-      )}
-      {state === 'subscribed' && (
-        <button onClick={unsubscribe} style={{
-          padding: '7px 12px', borderRadius: 9,
-          border: `1px solid ${border}`, background: surface, color: muted,
-          fontFamily: 'inherit', fontSize: 11, cursor: 'pointer', whiteSpace: 'nowrap',
-        }}>ปิด</button>
+
+      {/* Diagnostic log — appears during subscribe/test flow. User can
+          screenshot and send to admin for debugging. */}
+      {(steps.length > 0 || error) && (
+        <div style={{ marginTop: 8, padding: '10px 12px', borderRadius: 10,
+          background: '#1F1B17', color: '#CFC8BC', border: `1px solid ${border}`,
+          fontFamily: 'ui-monospace, monospace', fontSize: 10.5, lineHeight: 1.6,
+          maxHeight: 260, overflowY: 'auto' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+            <span style={{ fontWeight: 700, color: '#C48B3E' }}>📋 Push diagnostic</span>
+            <button onClick={() => setShowDiag(s => !s)} style={{
+              marginLeft: 'auto', background: 'none', border: 'none',
+              color: '#CFC8BC', fontSize: 10, cursor: 'pointer',
+            }}>{showDiag ? 'ซ่อน' : 'แสดง'}</button>
+          </div>
+          {showDiag && steps.map((s, i) => (
+            <div key={i}>{s.msg}</div>
+          ))}
+        </div>
       )}
     </div>
   );

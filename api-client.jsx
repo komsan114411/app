@@ -236,6 +236,12 @@ const api = {
     try { deviceId = (window.tracking && window.tracking.getDeviceId && window.tracking.getDeviceId()) || ''; } catch {}
     return request('/api/push/subscribe', { method: 'POST', body: { ...sub, deviceId } });
   },
+  async testPush(sub) {
+    // sub = { endpoint, keys: {p256dh, auth} } — exactly what the
+    // browser's PushSubscription.toJSON() returns. Backend validates
+    // + sends a test notification, returns { ok, reason?, statusCode? }.
+    return request('/api/push/test', { method: 'POST', body: sub });
+  },
   async broadcastPush(body)      { return request('/api/admin/push/broadcast', { method: 'POST', body, auth: true }); },
 
   // Escape hatch
