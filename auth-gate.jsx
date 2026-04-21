@@ -102,8 +102,12 @@ function AuthGate({ onSuccess }) {
       minHeight: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center',
       background: 'linear-gradient(180deg, #FBFAF7 0%, #F3EFE7 100%)',
       padding: 40, fontFamily: '"IBM Plex Sans Thai", system-ui',
+      position: 'relative', overflow: 'hidden',
     }}>
-      <form onSubmit={submit} autoComplete="off" style={{
+      {/* Ambient accent glow behind the login card — slow breathing pulse */}
+      <div className="ad-auth-glow"/>
+      <form onSubmit={submit} autoComplete="off" className="ad-auth-wrap" style={{
+        position: 'relative', zIndex: 1,
         width: 360, background: '#fff', borderRadius: 18, padding: 28,
         boxShadow: '0 20px 60px -20px rgba(0,0,0,0.15)',
         border: '1px solid rgba(0,0,0,0.06)',
@@ -176,7 +180,9 @@ function AuthGate({ onSuccess }) {
           border: 'none', background: (busy || locked) ? '#8F877C' : '#1F1B17',
           color: '#fff', fontFamily: 'inherit', fontSize: 14, fontWeight: 600,
           cursor: (busy || locked) ? 'not-allowed' : 'pointer',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10,
         }}>
+          {busy && <span className="ad-spin ad-spin-sm" style={{ background: 'conic-gradient(from 0deg, transparent 0deg, #fff 280deg, transparent 360deg)' }}/>}
           {busy ? 'กำลังตรวจสอบ…' : locked ? 'ถูกระงับชั่วคราว' : needsTotp ? 'ยืนยัน 2FA' : 'เข้าสู่ระบบ'}
         </button>
 

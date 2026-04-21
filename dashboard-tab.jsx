@@ -64,7 +64,11 @@ function DashboardTab({ me, state }) {
           <button onClick={runDiagnostic} disabled={diag?.running} style={{
             padding: '7px 14px', borderRadius: 8, border: '1px solid rgba(0,0,0,0.12)',
             background: '#fff', fontFamily: 'inherit', fontSize: 12, cursor: diag?.running ? 'wait' : 'pointer',
-          }}>{diag?.running ? 'กำลังทดสอบ…' : 'รันทดสอบ'}</button>
+            display: 'flex', alignItems: 'center', gap: 8,
+          }}>
+            {diag?.running && <span className="ad-spin ad-spin-sm"/>}
+            {diag?.running ? 'กำลังทดสอบ…' : 'รันทดสอบ'}
+          </button>
         </div>
         {diag?.results && (
           <div style={{ marginTop: 10, fontSize: 11, fontFamily: 'ui-monospace, monospace' }}>
@@ -88,11 +92,11 @@ function DashboardTab({ me, state }) {
         )}
       </Card>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 16 }}>
-        <StatCard icon="heart" label="ผู้ดูแล (ใช้งาน)" main={stats?.users?.active ?? '—'} sub={`จากทั้งหมด ${stats?.users?.total ?? '—'}`}/>
-        <StatCard icon="sparkle" label="คลิกวันนี้" main={stats?.clicks?.today ?? '—'} sub={`สัปดาห์นี้ ${stats?.clicks?.week ?? '—'}`}/>
-        <StatCard icon="settings" label="ปุ่มเมนู" main={stats?.config?.buttons ?? '—'} sub={`แบนเนอร์ ${stats?.config?.banners ?? '—'}`}/>
-        <StatCard icon="x" label="ล็อกอินล้มเหลว 24 ชม" main={stats?.security?.failedLogins24h ?? '—'} sub="ถ้าสูงผิดปกติ → ตรวจ Audit" tone={stats?.security?.failedLogins24h > 20 ? 'danger' : 'default'}/>
+      <div className="ad-stagger" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 16 }}>
+        <StatCard loading={!stats} icon="heart"    label="ผู้ดูแล (ใช้งาน)"    main={stats?.users?.active}           sub={stats ? `จากทั้งหมด ${stats.users?.total ?? '—'}` : 'จากทั้งหมด …'}/>
+        <StatCard loading={!stats} icon="sparkle"  label="คลิกวันนี้"          main={stats?.clicks?.today}           sub={stats ? `สัปดาห์นี้ ${stats.clicks?.week ?? '—'}` : 'สัปดาห์นี้ …'}/>
+        <StatCard loading={!stats} icon="settings" label="ปุ่มเมนู"            main={stats?.config?.buttons}         sub={stats ? `แบนเนอร์ ${stats.config?.banners ?? '—'}` : 'แบนเนอร์ …'}/>
+        <StatCard loading={!stats} icon="x"        label="ล็อกอินล้มเหลว 24 ชม" main={stats?.security?.failedLogins24h} sub="ถ้าสูงผิดปกติ → ตรวจ Audit" tone={stats?.security?.failedLogins24h > 20 ? 'danger' : 'default'}/>
       </div>
 
       <Card style={{ marginBottom: 12 }}>
@@ -151,12 +155,15 @@ function buildChart(ts, days = 7) {
   };
 }
 
-function StatCard({ icon, label, main, sub, tone = 'default' }) {
+function StatCard({ icon, label, main, sub, tone = 'default', loading = false }) {
   const toneStyle = tone === 'danger'
     ? { borderColor: 'rgba(180,70,58,0.3)', background: 'rgba(180,70,58,0.04)', color: '#B4463A' }
     : {};
+  // When loading (stats request still in flight) render shimmer blocks
+  // instead of "—". The blocks hold the same box dimensions as the
+  // eventual number / sub-text so the layout doesn't jump on arrival.
   return (
-    <Card style={{ padding: 14, ...toneStyle }}>
+    <Card className="ad-card-hover" style={{ padding: 14, ...toneStyle }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
         <div style={{
           width: 28, height: 28, borderRadius: 8, background: '#F3EFE7',
@@ -166,8 +173,18 @@ function StatCard({ icon, label, main, sub, tone = 'default' }) {
         </div>
         <div style={{ fontSize: 11, color: '#6B6458', textTransform: 'uppercase', letterSpacing: 0.5 }}>{label}</div>
       </div>
-      <div style={{ fontSize: 24, fontWeight: 700, lineHeight: 1.1, ...(toneStyle.color ? { color: toneStyle.color } : {}) }}>{main}</div>
-      {sub && <div style={{ fontSize: 11, color: '#8F877C', marginTop: 3 }}>{sub}</div>}
+      {loading ? (
+        <span className="ad-skel" style={{ width: 56, height: 26, display: 'inline-block' }}>0</span>
+      ) : (
+        <div className="ad-count" style={{ fontSize: 24, fontWeight: 700, lineHeight: 1.1, ...(toneStyle.color ? { color: toneStyle.color } : {}) }}>
+          {main ?? '—'}
+        </div>
+      )}
+      {sub && (
+        loading
+          ? <div style={{ marginTop: 6 }}><span className="ad-skel" style={{ width: 100, height: 11, display: 'inline-block' }}>.</span></div>
+          : <div style={{ fontSize: 11, color: '#8F877C', marginTop: 3 }}>{sub}</div>
+      )}
     </Card>
   );
 }

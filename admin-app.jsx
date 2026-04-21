@@ -79,17 +79,24 @@ function AdminShell({ state, setState, onPreview, liveMode, authed, onLogout, me
           </div>
         )}
         {tabs.map(t => (
-          <button key={t.id} onClick={() => setTab(t.id)} style={{
-            display: 'flex', alignItems: 'center', gap: narrow ? 5 : 10,
-            padding: narrow ? '6px 10px' : '10px 12px',
-            borderRadius: narrow ? 999 : 10, border: narrow ? '1px solid rgba(0,0,0,0.08)' : 'none',
-            background: tab === t.id ? '#fff' : (narrow ? '#fff' : 'transparent'),
-            color: tab === t.id ? '#1F1B17' : '#6B6458',
-            fontFamily: 'inherit', fontSize: narrow ? 11 : 13, fontWeight: tab === t.id ? 600 : 500,
-            cursor: 'pointer', textAlign: 'left', whiteSpace: 'nowrap',
-            boxShadow: tab === t.id ? '0 1px 2px rgba(0,0,0,0.06)' : 'none',
-            transition: 'all 180ms ease',
-          }}>
+          <button
+            key={t.id}
+            onClick={() => setTab(t.id)}
+            className={!narrow ? `ad-sidebar-item${tab === t.id ? ' active' : ''}` : ''}
+            style={{
+              display: 'flex', alignItems: 'center', gap: narrow ? 5 : 10,
+              padding: narrow ? '6px 10px' : '10px 12px 10px 16px',
+              borderRadius: narrow ? 999 : 10, border: narrow ? '1px solid rgba(0,0,0,0.08)' : 'none',
+              background: tab === t.id ? '#fff' : (narrow ? '#fff' : 'transparent'),
+              color: tab === t.id ? '#1F1B17' : '#6B6458',
+              fontFamily: 'inherit', fontSize: narrow ? 11 : 13, fontWeight: tab === t.id ? 600 : 500,
+              cursor: 'pointer', textAlign: 'left', whiteSpace: 'nowrap',
+              boxShadow: tab === t.id ? '0 1px 2px rgba(0,0,0,0.06)' : 'none',
+              transition: 'all 180ms ease',
+            }}
+            onMouseEnter={e => { if (tab !== t.id && !narrow) e.currentTarget.style.background = 'rgba(255,255,255,0.5)'; }}
+            onMouseLeave={e => { if (tab !== t.id && !narrow) e.currentTarget.style.background = 'transparent'; }}
+          >
             <Icon name={t.icon} size={narrow ? 12 : 16} stroke={1.8}/>
             {t.label}
           </button>
@@ -162,9 +169,9 @@ function SectionHead({ title, sub, right }) {
   );
 }
 
-function Card({ children, style }) {
+function Card({ children, style, className }) {
   return (
-    <div style={{
+    <div className={className} style={{
       background: '#fff', border: '1px solid rgba(0,0,0,0.06)',
       borderRadius: 14, padding: 16, ...style,
     }}>{children}</div>

@@ -95,10 +95,149 @@
     to   { opacity: 1; transform: translateY(0); }
   }
   .ua-tile:hover { transform: translateY(-2px); }
-  .ad-tab { animation: adTab 340ms cubic-bezier(0.2, 0.8, 0.3, 1) both; }
+
+  /* ── Admin console animation system ─────────────────────────
+     Keeps the admin surface serious (not sci-fi splashy) while
+     still signalling state and flow: tab swaps blur-fade, loading
+     numbers shimmer, sidebar active tab grows an accent bar, cards
+     enter in a short stagger, and a compact conic spinner handles
+     inline "busy" indicators. All transform/opacity/filter only
+     for GPU compositing. */
+
+  /* Main-content tab swap: slide + scale + brief blur for a
+     "focus pull" feel, then resolve sharp. */
+  .ad-tab { animation: adTab 460ms cubic-bezier(0.16, 0.84, 0.44, 1) both; }
   @keyframes adTab {
-    from { opacity: 0; transform: translateX(8px); }
-    to   { opacity: 1; transform: translateX(0); }
+    from { opacity: 0; transform: translateX(12px) scale(0.985); filter: blur(3px); }
+    to   { opacity: 1; transform: translateX(0)    scale(1);    filter: blur(0);   }
+  }
+
+  /* Wrap any grid/row of cards in .ad-stagger to get a short
+     cascade. First 10 children get explicit delays; anything past
+     that just enters together. */
+  .ad-stagger > * {
+    animation: adStaggerIn 520ms cubic-bezier(0.2, 0.8, 0.3, 1) both;
+  }
+  .ad-stagger > *:nth-child(1)  { animation-delay:   0ms; }
+  .ad-stagger > *:nth-child(2)  { animation-delay:  60ms; }
+  .ad-stagger > *:nth-child(3)  { animation-delay: 120ms; }
+  .ad-stagger > *:nth-child(4)  { animation-delay: 180ms; }
+  .ad-stagger > *:nth-child(5)  { animation-delay: 240ms; }
+  .ad-stagger > *:nth-child(6)  { animation-delay: 300ms; }
+  .ad-stagger > *:nth-child(7)  { animation-delay: 360ms; }
+  .ad-stagger > *:nth-child(8)  { animation-delay: 420ms; }
+  .ad-stagger > *:nth-child(9)  { animation-delay: 480ms; }
+  .ad-stagger > *:nth-child(10) { animation-delay: 540ms; }
+  @keyframes adStaggerIn {
+    from { opacity: 0; transform: translateY(10px); }
+    to   { opacity: 1; transform: translateY(0);    }
+  }
+
+  /* Shimmer skeleton — apply to anything while its real value is
+     loading. Text is rendered transparent so layout stays stable
+     when the real value replaces it. */
+  .ad-skel {
+    display: inline-block;
+    background: linear-gradient(90deg,
+      rgba(31,27,23,0.05) 0%,
+      rgba(31,27,23,0.11) 50%,
+      rgba(31,27,23,0.05) 100%);
+    background-size: 200% 100%;
+    animation: adShimmer 1.4s ease-in-out infinite;
+    border-radius: 6px;
+    color: transparent !important;
+    user-select: none;
+    min-height: 1em;
+  }
+  @keyframes adShimmer {
+    from { background-position: 200% 0;  }
+    to   { background-position: -200% 0; }
+  }
+
+  /* Compact conic spinner — drops into buttons/rows at 18px. The
+     mask carves out a transparent hole in the centre so the ring
+     reads cleanly against any background. */
+  .ad-spin {
+    display: inline-block;
+    width: 18px; height: 18px; border-radius: 50%;
+    background: conic-gradient(from 0deg,
+      transparent 0deg,
+      #C48B3E 280deg,
+      transparent 360deg);
+    mask: radial-gradient(circle at center, transparent 6px, black 7px);
+    -webkit-mask: radial-gradient(circle at center, transparent 6px, black 7px);
+    animation: adSpinRot 0.85s linear infinite;
+    flex-shrink: 0;
+    vertical-align: middle;
+  }
+  .ad-spin-sm { width: 14px; height: 14px;
+    mask: radial-gradient(circle at center, transparent 5px, black 6px);
+    -webkit-mask: radial-gradient(circle at center, transparent 5px, black 6px);
+  }
+  @keyframes adSpinRot { to { transform: rotate(360deg); } }
+
+  /* Sidebar active indicator — gradient bar slides in on the left
+     of the active tab. Put className='ad-sidebar-item' on each tab
+     button, and toggle the 'active' modifier when selected. */
+  .ad-sidebar-item { position: relative; }
+  .ad-sidebar-item.active::before {
+    content: ''; position: absolute;
+    left: 0; top: 22%; bottom: 22%; width: 3px;
+    border-radius: 0 3px 3px 0;
+    background: linear-gradient(180deg, #C48B3E 0%, #B4463A 100%);
+    animation: adBarIn 380ms cubic-bezier(0.16, 0.84, 0.44, 1) both;
+  }
+  @keyframes adBarIn {
+    from { transform: scaleY(0.15); opacity: 0; }
+    to   { transform: scaleY(1);    opacity: 1; }
+  }
+
+  /* Card hover lift — subtle, for clickable cards only. */
+  .ad-card-hover {
+    transition:
+      transform 220ms cubic-bezier(0.2, 0.8, 0.3, 1),
+      box-shadow 220ms ease,
+      border-color 220ms ease;
+  }
+  .ad-card-hover:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 22px 44px -22px rgba(0,0,0,0.18);
+  }
+
+  /* Auth gate entrance + ambient glow behind the login card. */
+  .ad-auth-wrap {
+    position: relative;
+    animation: adAuthIn 640ms cubic-bezier(0.2, 0.8, 0.3, 1) both;
+  }
+  @keyframes adAuthIn {
+    from { opacity: 0; transform: translateY(18px) scale(0.97); }
+    to   { opacity: 1; transform: translateY(0)    scale(1);    }
+  }
+  .ad-auth-glow {
+    position: absolute; inset: -60px; pointer-events: none; z-index: 0;
+    background: radial-gradient(ellipse 60% 50% at 50% 30%,
+      rgba(196,139,62,0.28) 0%, transparent 70%);
+    animation: adGlowPulse 6s ease-in-out infinite alternate;
+  }
+  @keyframes adGlowPulse {
+    from { opacity: 0.55; transform: scale(1);    }
+    to   { opacity: 0.9;  transform: scale(1.08); }
+  }
+
+  /* Tabular-numeric class so counts don't jitter when digits
+     change width (e.g. 8 → 10 in a stat tile). */
+  .ad-count { font-variant-numeric: tabular-nums; }
+
+  /* prefers-reduced-motion — kill admin animations too */
+  @media (prefers-reduced-motion: reduce) {
+    .ad-tab, .ad-stagger > *,
+    .ad-skel, .ad-spin,
+    .ad-sidebar-item.active::before,
+    .ad-auth-wrap, .ad-auth-glow {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+    }
+    .ad-card-hover { transition: none !important; }
   }
   @keyframes toastIn {
     from { opacity: 0; transform: translateY(20px) scale(0.96); }
