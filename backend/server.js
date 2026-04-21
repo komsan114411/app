@@ -250,7 +250,16 @@ const corsOpts = {
   },
   credentials: true,
   methods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-CSRF-Token'],
+  // Custom headers our analytics client attaches:
+  //   • X-Device  — anonymous UUID (redundant with body.deviceId, but
+  //                 lets the server reject before parsing the body)
+  //   • X-Session — current session UUID
+  //   • X-Consent — '0' when the user denied analytics
+  // These are non-safelisted, so POST/json from the APK's Capacitor
+  // WebView (origin https://localhost) preflights — and without them
+  // in this list the preflight fails and every event is dropped by
+  // the browser before hitting the network.
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-CSRF-Token', 'X-Device', 'X-Session', 'X-Consent'],
   maxAge: 600,
 };
 let corsRejectWarned = false;
