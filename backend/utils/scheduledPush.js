@@ -142,8 +142,31 @@ function appendParam(url, key, value) {
   } catch { return url; }
 }
 
+// Recovery window: campaigns that have been in 'sending' for longer
+// than this are assumed to belong to a crashed worker and get flipped
+// back to 'scheduled' so another replica can pick them up. The window
+// must be longer than any realistic send round — we allow 15 minutes,
+// well above the worst-case (5000 subs × 5s timeout / 10 concurrency
+// = ~42 min, but that's unreachable because PUSH_MAX_SUBS is 5000 and
+// our concurrency + timeout numbers cap real sends under 10 min).
+const STUCK_RECOVERY_MS = 15 * 60_000;
+
+async function recoverStuck() {
+  const cutoff = new Date(Date.now() - STUCK_RECOVERY_MS);
+  try {
+    const r = await PushCampaign.updateMany(
+      { status: 'sending', updatedAt: { $lt: cutoff } },
+      { $set: { status: 'scheduled' } },
+    );
+    if (r.modifiedCount) log.warn({ count: r.modifiedCount }, 'campaign_stuck_recovered');
+  } catch (e) { log.warn({ err: e?.message }, 'campaign_recovery_error'); }
+}
+
 async function tick() {
   if (!isPushConfigured()) return;
+  // Before claiming new campaigns, recover any that are stuck in
+  // 'sending' from a previous crashed worker.
+  await recoverStuck();
   const now = new Date();
   // Atomic claim: flip ONE due campaign from 'scheduled' → 'sending'.
   // If multiple replicas run this worker, only the winner gets the doc.

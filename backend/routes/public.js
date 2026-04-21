@@ -7,7 +7,9 @@ import { ClickEvent } from '../models/ClickEvent.js';
 import { PushSubscription } from '../models/PushSubscription.js';
 import { Device } from '../models/Device.js';
 import { EventLog, EVENT_TYPES } from '../models/EventLog.js';
+import { PushCampaign } from '../models/PushCampaign.js';
 import { getPublicKey, isConfigured as isPushConfigured } from '../utils/vapid.js';
+import mongoose from 'mongoose';
 import { publicReadLimiter, trackLimiter } from '../middleware/rateLimit.js';
 import { validate, trackBody } from '../middleware/validate.js';
 import { hashIp, safeText } from '../utils/sanitize.js';
@@ -261,6 +263,21 @@ publicRouter.post('/track/event', trackLimiter, async (req, res) => {
       });
     }
     if (docs.length) await EventLog.insertMany(docs, { ordered: false });
+
+    // push_click events carry the campaign ID in `target`. Increment
+    // the matching PushCampaign.stats.clicks counter so the admin
+    // sees CTR in the Campaigns panel instead of always seeing 0.
+    // Gated on valid ObjectId so we don't hammer Mongo with junk.
+    const clicks = docs.filter(d => d.type === 'push_click' && mongoose.Types.ObjectId.isValid(d.target));
+    if (clicks.length) {
+      try {
+        const counts = new Map();
+        for (const c of clicks) counts.set(c.target, (counts.get(c.target) || 0) + 1);
+        await Promise.all([...counts.entries()].map(([id, n]) =>
+          PushCampaign.updateOne({ _id: id }, { $inc: { 'stats.clicks': n } })
+        ));
+      } catch {}
+    }
   } catch {
     // Intentionally swallow — analytics must never fail a client flow.
   }
@@ -413,7 +430,9 @@ publicRouter.post('/push/subscribe', publicReadLimiter, async (req, res) => {
   if (!keys || typeof keys !== 'object' || !keys.p256dh || !keys.auth) return res.status(400).json({ error: 'invalid' });
   // Phase 3: accept an optional deviceId so the admin can resolve a
   // push segment directly to subscription endpoints without going
-  // through the ipHash proxy join.
+  // through the ipHash proxy join. ALWAYS set the field (even as '')
+  // so legacy rows don't silently keep a missing/mismatched deviceId
+  // on re-subscribe — the field is guaranteed to be current.
   const deviceId = validateDeviceId((req.body && req.body.deviceId) || req.get('x-device'));
   try {
     await PushSubscription.updateOne(
@@ -423,7 +442,7 @@ publicRouter.post('/push/subscribe', publicReadLimiter, async (req, res) => {
           endpoint, keys: { p256dh: String(keys.p256dh).slice(0, 256), auth: String(keys.auth).slice(0, 256) },
           ipHash: hashIp(req.ip),
           userAgent: safeText(req.get('user-agent') || '', 200),
-          ...(deviceId ? { deviceId } : {}),
+          deviceId,  // '' when client didn't send one; broadcast still finds via ipHash fallback
         },
       },
       { upsert: true },

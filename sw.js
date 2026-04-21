@@ -1,6 +1,6 @@
 // sw.js — Service worker: offline shell + stale-while-revalidate + web push.
 
-const VERSION = 'v51';
+const VERSION = 'v52';
 const SHELL = 'shell-' + VERSION;
 
 // Public-surface JSX only. Admin-only bundles (auth-gate, admin-app,
@@ -261,9 +261,15 @@ self.addEventListener('notificationclick', (event) => {
         // The SW can't use window.API_BASE — rely on same-origin fetch
         // when on web, and fall through silently on the APK (Capacitor
         // WebView has a separate tracking path through the landing page).
+        //
+        // keepalive: true — without it, the browser may cancel this
+        // fetch the moment the SW context terminates after openWindow()
+        // below, silently dropping the push_click beacon on fast
+        // navigations.
         await fetch('/api/track/event', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
+          keepalive: true,
           body: JSON.stringify({
             deviceId: 'sw-' + safeCampaign,            // synthetic, just for count
             events: [{ type: 'push_click', target: safeCampaign }],

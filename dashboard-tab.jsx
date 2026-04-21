@@ -19,8 +19,19 @@ function DashboardTab({ me, state }) {
 
   React.useEffect(() => {
     load();
-    const id = setInterval(load, 30_000);
-    return () => clearInterval(id);
+    // Only poll when the admin tab is actually visible. A backgrounded
+    // tab on mobile would otherwise fire every 30s for hours, burning
+    // battery and triggering rate limits on the admin endpoints.
+    let id = null;
+    const start = () => { if (!id) id = setInterval(load, 30_000); };
+    const stop  = () => { if (id) { clearInterval(id); id = null; } };
+    if (typeof document !== 'undefined' && !document.hidden) start();
+    const onVis = () => {
+      if (document.hidden) stop();
+      else { load(); start(); }
+    };
+    document.addEventListener('visibilitychange', onVis);
+    return () => { stop(); document.removeEventListener('visibilitychange', onVis); };
   }, [load]);
 
   // End-to-end ping: exercises every critical path (read, admin auth,

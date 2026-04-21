@@ -166,7 +166,14 @@ function beginSession() {
 function endSession(reason = 'unload') {
   if (!_sessionId) return;
   const duration = Date.now() - _sessionStart;
-  enqueue('session_end', { durationMs: duration, label: reason }, /* immediate */ true);
+  // Enqueue the session_end while the session is still active so
+  // _currentContext() captures the correct sessionId. We also force
+  // a beacon flush here (not just an immediate fetch) so pagehide /
+  // unload paths don't rely on the async fetch completing — any
+  // re-queued events after a transient flush failure are also
+  // drained WITH the live sessionId before we null it.
+  enqueue('session_end', { durationMs: duration, label: reason });
+  _beaconFlush();
   _sessionId = null;
   _sessionStart = 0;
 }

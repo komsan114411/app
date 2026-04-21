@@ -9,10 +9,14 @@ import { env } from '../config/env.js';
 import { User } from '../models/User.js';
 import { Device } from '../models/Device.js';
 import { EventLog } from '../models/EventLog.js';
+import { AppConfig } from '../models/AppConfig.js';
 import { log } from './logger.js';
 
 const INTERVAL_MS = 60 * 60_000;  // check every hour, send only at target hour
 const TARGET_HOUR_UTC = 1;        // 01:00 UTC ≈ 08:00 Bangkok
+// `_lastRunDay` only prevents THIS replica from re-sending within a
+// single process — we also guard cross-replica with an atomic
+// findOneAndUpdate on AppConfig.lastDigestDay (see tick()).
 let _lastRunDay = '';
 
 function formatDate(d) {
@@ -78,6 +82,25 @@ async function tick() {
   if (now.getUTCHours() !== TARGET_HOUR_UTC) return;
   const today = formatDate(now);
   if (_lastRunDay === today) return;
+
+  // Cross-replica lock: only the replica whose update wins the
+  // "today ≠ lastDigestDay" race may send. Mongo findOneAndUpdate is
+  // atomic, so if 3 replicas race here, two see the post-update doc
+  // (lastDigestDay already == today) and bail.
+  try {
+    const updated = await AppConfig.findOneAndUpdate(
+      { _id: 'singleton', lastDigestDay: { $ne: today } },
+      { $set: { lastDigestDay: today } },
+      { new: true },
+    );
+    if (!updated) {
+      _lastRunDay = today;   // avoid re-checking within this replica
+      return;
+    }
+  } catch (e) {
+    log.warn({ err: e?.message }, 'daily_digest_lock_error');
+    return;
+  }
   _lastRunDay = today;
 
   try {

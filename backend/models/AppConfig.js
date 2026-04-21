@@ -102,6 +102,12 @@ const AppConfigSchema = new mongoose.Schema({
     createdAt:  { type: Date, default: null },
   },
 
+  // Latest YYYY-MM-DD that some replica successfully sent the daily
+  // digest email. Used as a distributed lock — findOneAndUpdate with
+  // the old day in the filter atomically claims the send. Prevents
+  // N replicas emailing the same digest N times.
+  lastDigestDay:    { type: String, default: '', maxlength: 10 },
+
   updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
 }, { timestamps: true, optimisticConcurrency: true });
 

@@ -203,18 +203,27 @@ function CampaignsPanel() {
         <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>📜 Campaigns</div>
         {!rows && <div><span className="ad-spin ad-spin-sm"/></div>}
         {rows && !rows.length && <div style={{ fontSize: 12, color: '#8F877C' }}>ยังไม่มี campaign</div>}
-        {rows && rows.map(r => (
-          <div key={r._id} style={{ padding: '10px 0', borderBottom: '1px solid rgba(0,0,0,0.06)', display: 'flex', alignItems: 'center', gap: 10 }}>
-            <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 12, fontWeight: 600 }}>{r.name}</div>
-              <div style={{ fontSize: 11, color: '#6B6458' }}>
-                {r.title} · status: {r.status}
-                {r.stats && r.stats.sent ? ` · sent ${r.stats.sent}` : ''}
+        {rows && rows.map(r => {
+          const s = r.stats || {};
+          const ctr = s.sent > 0 ? ((s.clicks || 0) / s.sent * 100).toFixed(1) + '%' : '—';
+          return (
+            <div key={r._id} style={{ padding: '10px 0', borderBottom: '1px solid rgba(0,0,0,0.06)', display: 'flex', alignItems: 'center', gap: 10 }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 12, fontWeight: 600 }}>{r.name}</div>
+                <div style={{ fontSize: 11, color: '#6B6458' }}>
+                  {r.title} · status: <strong>{r.status}</strong>
+                  {r.status === 'sent' && (
+                    <> · targeted <strong>{s.targeted ?? 0}</strong>
+                       · sent <strong>{s.sent ?? 0}</strong>
+                       {s.failed ? <> · failed {s.failed}</> : null}
+                       {s.clicks ? <> · clicks {s.clicks} (CTR {ctr})</> : null}</>
+                  )}
+                </div>
               </div>
+              <button onClick={() => remove(r._id)} style={btnGhost}>ลบ</button>
             </div>
-            <button onClick={() => remove(r._id)} style={btnGhost}>ลบ</button>
-          </div>
-        ))}
+          );
+        })}
       </Card>
     </div>
   );
@@ -227,8 +236,13 @@ const btnGhost     = { padding: '5px 10px', borderRadius: 6, border: '1px solid 
 // EventSource can't attach an Authorization header, so we mint a
 // short-lived nonce via /events/mint-token (which DOES authenticate
 // via Bearer) and pass it as ?t=<nonce>. The token has a 2-minute
-// TTL and is single-use on the server side, so a leaked URL can't
-// keep streaming forever.
+// TTL and is single-use on the server side.
+//
+// Because the token expires at 2 min, we proactively re-mint every
+// 90 s and swap the EventSource so the panel never drops. On a
+// network glitch the browser also fires onerror — we re-mint +
+// reconnect there too, with a small exponential backoff so we don't
+// hammer the mint endpoint when the real problem is the network.
 function LivePanel() {
   const [events, setEvents] = React.useState([]);
   const [connected, setConnected] = React.useState(false);
@@ -236,17 +250,28 @@ function LivePanel() {
   React.useEffect(() => {
     let es = null;
     let cancelled = false;
-    (async () => {
+    let refreshTimer = null;
+    let backoffMs = 1000;
+
+    const open = async () => {
+      if (cancelled) return;
       try {
         const { token } = await api.mintSseToken();
         if (cancelled || !token) return;
+        if (es) { try { es.close(); } catch {} }
         const base = (typeof window !== 'undefined' && window.API_BASE) || '';
         es = new EventSource(base + '/api/admin/events/stream?t=' + encodeURIComponent(token));
-        es.onopen  = () => { setConnected(true); setErr(''); };
+        es.onopen = () => {
+          setConnected(true); setErr('');
+          backoffMs = 1000;
+        };
         es.onerror = () => {
           setConnected(false);
-          // Auto-refresh the nonce once it expires. 2-minute TTL + small
-          // jitter so we don't hammer when something else is wrong.
+          if (cancelled) return;
+          // Re-mint + reconnect. Exponential backoff caps at 30 s so
+          // we don't wedge the admin's network if the server is down.
+          setTimeout(() => { if (!cancelled) open(); }, backoffMs);
+          backoffMs = Math.min(30_000, backoffMs * 2);
         };
         es.addEventListener('ev', (e) => {
           try {
@@ -256,9 +281,20 @@ function LivePanel() {
         });
       } catch (e) {
         setErr(e?.message || 'mint_token_failed');
+        if (!cancelled) setTimeout(open, backoffMs);
+        backoffMs = Math.min(30_000, backoffMs * 2);
       }
-    })();
-    return () => { cancelled = true; if (es) es.close(); };
+    };
+
+    open();
+    // Proactive re-mint every 90 s — well before the 120 s TTL.
+    refreshTimer = setInterval(() => { if (!cancelled) open(); }, 90_000);
+
+    return () => {
+      cancelled = true;
+      if (refreshTimer) clearInterval(refreshTimer);
+      if (es) { try { es.close(); } catch {} }
+    };
   }, []);
   return (
     <Card>

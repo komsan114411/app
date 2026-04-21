@@ -11,6 +11,13 @@ const RefreshTokenSchema = new mongoose.Schema({
   expiresAt: { type: Date, required: true, expires: 0 }, // TTL on value (Mongo removes post-expiry)
   revokedAt: { type: Date, default: null },
   revokeReason: { type: String, default: '', maxlength: 32 },
+  // Captured at rotation time so the grace-window reuse-detection
+  // check in utils/tokens.js can verify the follow-up request came
+  // from the same IP. Without this field declared in the schema,
+  // Mongoose silently dropped the write and every grace check saw
+  // `undefined`, which allowed replayed cookies from a different
+  // network to pass the time-bounded grace window.
+  rotatedIp: { type: String, default: '', maxlength: 64 },
 }, { timestamps: true });
 
 RefreshTokenSchema.index({ userId: 1, revokedAt: 1 });

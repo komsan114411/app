@@ -1895,6 +1895,21 @@ adminRouter.post('/push/broadcast', adminWriteLimiter, requireRole('admin'), asy
     ipHash: hashIp(req.ip), userAgent: safeText(req.get('user-agent') || '', 200),
     diff: { title: p.data.title, url: safeClickUrl, sent, failed, pruned: staleEndpoints.length, rejected: rejectedEndpoints.length },
   });
+  // Consistent with /broadcast-segmented: always write history so the
+  // admin's Campaigns panel shows every send, not only the segmented
+  // ones. Targets "*" segment to distinguish from normal segments.
+  try {
+    await PushCampaign.create({
+      name: `ส่งทั้งหมด · ${new Date().toLocaleString('th-TH', { timeZone: 'Asia/Bangkok' })}`,
+      title: String(p.data.title).slice(0, 120),
+      body: String(p.data.body || '').slice(0, 300),
+      url: String(safeClickUrl).slice(0, 512),
+      segment: {},  // empty = all subscribers
+      status: 'sent', sentAt: new Date(),
+      createdBy: req.user.id,
+      stats: { targeted: safeSubs.length, sent, failed, pruned: staleEndpoints.length, clicks: 0 },
+    });
+  } catch (e) { log.warn({ err: e?.message }, 'campaign_history_write_failed'); }
   res.json({ sent, failed, pruned: staleEndpoints.length, rejected: rejectedEndpoints.length });
 });
 
