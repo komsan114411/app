@@ -136,13 +136,25 @@ function CampaignsPanel() {
     if (!form.title.trim()) return;
     setBusy(true);
     try {
-      await api.broadcastSegmented({
+      const r = await api.broadcastSegmented({
         title: form.title, body: form.body, url: form.url,
         segment: { inactiveDays: Number(form.inactiveDays) || 0 },
       });
-      toast.success('ส่งเรียบร้อย');
+      if (!r?.targeted) {
+        toast.warn('ยังไม่มีผู้ใช้ที่เข้าเกณฑ์ · ตรวจว่ามีคน subscribe push แล้วหรือยัง');
+      } else if (!r?.sent) {
+        toast.warn(`ถึง ${r.targeted} ราย แต่ส่งไม่ผ่านเลย · อาจเป็น VAPID เก่า`);
+      } else {
+        toast.success(`ส่งสำเร็จ ${r.sent}/${r.targeted} ราย`);
+      }
       setPreview(null);
-    } catch (e) { toast.error('ส่งไม่สำเร็จ: ' + (e.message || 'unknown')); }
+      load();
+    } catch (e) {
+      const detail = e?.responseBody?.detail;
+      if (e.message === 'push_disabled') toast.error('Push ยังไม่พร้อม — ' + (detail || 'ให้ admin รีสตาร์ท backend เพื่อให้ auto-generate VAPID'));
+      else if (e.message === 'invalid_input') toast.error('กรอกหัวข้อให้ครบก่อน');
+      else toast.error('ส่งไม่สำเร็จ: ' + (e.message || 'unknown'));
+    }
     finally { setBusy(false); }
   };
   const saveCampaign = async () => {

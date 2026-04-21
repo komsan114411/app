@@ -91,6 +91,17 @@ const AppConfigSchema = new mongoose.Schema({
   // Rotating admin-access URL token — see AdminAccessTokenSchema comment
   adminAccessToken: { type: AdminAccessTokenSchema, default: () => ({}) },
 
+  // Web Push VAPID keypair. Generated once on first boot if neither the
+  // env vars PUSH_VAPID_PUBLIC/PUSH_VAPID_PRIVATE nor this field are set.
+  // Persisted in the config singleton so every deploy / restart reuses
+  // the same keys — otherwise every browser that previously subscribed
+  // would be bound to a stale private key and every send would 403.
+  vapidKeys: {
+    publicKey:  { type: String, default: '', maxlength: 200 },
+    privateKey: { type: String, default: '', maxlength: 200 },
+    createdAt:  { type: Date, default: null },
+  },
+
   updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
 }, { timestamps: true, optimisticConcurrency: true });
 

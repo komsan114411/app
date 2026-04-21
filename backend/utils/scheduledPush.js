@@ -19,16 +19,12 @@ import { AuditLog } from '../models/AuditLog.js';
 import webPush from 'web-push';
 import { env } from '../config/env.js';
 import { log } from './logger.js';
+import { isConfigured as isPushConfigured } from './vapid.js';
 
-// web-push stores VAPID config as module-level state. In practice
-// admin.js configures it at import time and this worker inherits the
-// shared state, but we re-configure here too so the worker is
-// self-contained and won't silently send to the stub. Idempotent.
-if (env.PUSH_VAPID_PUBLIC && env.PUSH_VAPID_PRIVATE) {
-  try {
-    webPush.setVapidDetails(env.PUSH_VAPID_SUBJECT, env.PUSH_VAPID_PUBLIC, env.PUSH_VAPID_PRIVATE);
-  } catch (e) { log.warn({ err: e.message }, 'vapid_worker_config_invalid'); }
-}
+// VAPID is set up once at boot by utils/vapid.js — that helper also
+// handles the auto-generate + persist fallback when env isn't set.
+// web-push keeps the details as module-level state, so importing it
+// here uses whatever pair vapid.js wired. No need to re-configure.
 
 const CONCURRENCY = 10;
 const TIMEOUT_MS  = 5000;
@@ -147,7 +143,7 @@ function appendParam(url, key, value) {
 }
 
 async function tick() {
-  if (!env.PUSH_VAPID_PUBLIC || !env.PUSH_VAPID_PRIVATE) return;
+  if (!isPushConfigured()) return;
   const now = new Date();
   // Atomic claim: flip ONE due campaign from 'scheduled' → 'sending'.
   // If multiple replicas run this worker, only the winner gets the doc.

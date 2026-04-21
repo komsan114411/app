@@ -7,6 +7,7 @@ import { ClickEvent } from '../models/ClickEvent.js';
 import { PushSubscription } from '../models/PushSubscription.js';
 import { Device } from '../models/Device.js';
 import { EventLog, EVENT_TYPES } from '../models/EventLog.js';
+import { getPublicKey, isConfigured as isPushConfigured } from '../utils/vapid.js';
 import { publicReadLimiter, trackLimiter } from '../middleware/rateLimit.js';
 import { validate, trackBody } from '../middleware/validate.js';
 import { hashIp, safeText } from '../utils/sanitize.js';
@@ -103,7 +104,12 @@ publicRouter.get('/config', publicReadLimiter, async (req, res) => {
     ...materializeConfig(origin, cfg),
     capabilities: {
       emailReset: !!env.SMTP_HOST,
-      pushNotifications: !!(env.PUSH_VAPID_PUBLIC && env.PUSH_VAPID_PRIVATE),
+      // Use the shared vapid resolver — covers both env-configured AND
+      // the auto-generated fallback stored in AppConfig.vapidKeys.
+      // Without this fix, a deployment with no env vars never surfaces
+      // the "Enable notifications" button, and the PushSubscription
+      // collection stays empty forever.
+      pushNotifications: isPushConfigured(),
       captcha: !!env.TURNSTILE_SECRET,
     },
     updatedAt: cfg.updatedAt,
@@ -370,8 +376,9 @@ publicRouter.post('/privacy/forget', publicReadLimiter, async (req, res) => {
 
 // ── Web Push subscribe (public — anyone can opt in) ───────
 publicRouter.get('/push/vapid-key', (req, res) => {
-  if (!env.PUSH_VAPID_PUBLIC) return res.status(404).json({ error: 'push_disabled' });
-  res.json({ publicKey: env.PUSH_VAPID_PUBLIC });
+  const pub = getPublicKey();
+  if (!pub) return res.status(404).json({ error: 'push_disabled' });
+  res.json({ publicKey: pub });
 });
 
 // Allow-list of known Web Push service hosts. An attacker who POSTs a

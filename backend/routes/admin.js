@@ -9,6 +9,7 @@ import { ClickEvent } from '../models/ClickEvent.js';
 import { Device } from '../models/Device.js';
 import { EventLog } from '../models/EventLog.js';
 import { PushCampaign } from '../models/PushCampaign.js';
+import { isConfigured as isPushConfigured } from '../utils/vapid.js';
 import { AuditLog } from '../models/AuditLog.js';
 import { User } from '../models/User.js';
 import { RefreshToken } from '../models/RefreshToken.js';
@@ -76,8 +77,9 @@ adminRouter.get('/health/features', async (req, res) => {
     envVars: ['TURNSTILE_SECRET'],
   });
 
-  // Web Push (VAPID)
-  const pushOk = !!(env.PUSH_VAPID_PUBLIC && env.PUSH_VAPID_PRIVATE && vapidConfigured);
+  // Web Push (VAPID). Check the shared resolver which inspects env first
+  // and falls back to the persisted AppConfig.vapidKeys pair.
+  const pushOk = isPushConfigured();
   let pushSubCount = 0;
   if (pushOk) { try { pushSubCount = await PushSubscription.countDocuments({}); } catch {} }
   checks.push({
@@ -1805,7 +1807,7 @@ function withTimeout(promise, ms) {
 }
 
 adminRouter.post('/push/broadcast', adminWriteLimiter, requireRole('admin'), async (req, res) => {
-  if (!env.PUSH_VAPID_PUBLIC || !env.PUSH_VAPID_PRIVATE) return res.status(400).json({ error: 'push_disabled' });
+  if (!isPushConfigured()) return res.status(400).json({ error: 'push_disabled', detail: 'Web Push ยังไม่พร้อม — ตรวจสอบว่า VAPID ถูก generate/persist เรียบร้อยและรีสตาร์ท backend' });
   const p = pushBody.safeParse(req.body);
   if (!p.success) return res.status(400).json({ error: 'invalid_input' });
 
@@ -1959,7 +1961,7 @@ adminRouter.post('/push/segment/preview', adminWriteLimiter, requireRole('admin'
 // This is a known limitation — a proper link would require the client
 // to send `deviceId` during /push/subscribe. Tracking v2 will do that.
 adminRouter.post('/push/broadcast-segmented', adminWriteLimiter, requireRole('admin'), async (req, res) => {
-  if (!env.PUSH_VAPID_PUBLIC || !env.PUSH_VAPID_PRIVATE) return res.status(400).json({ error: 'push_disabled' });
+  if (!isPushConfigured()) return res.status(400).json({ error: 'push_disabled', detail: 'Web Push ยังไม่พร้อม — ตรวจสอบว่า VAPID ถูก generate/persist เรียบร้อยและรีสตาร์ท backend' });
   const title = String(req.body?.title || '').slice(0, 80).trim();
   const bodyTx = String(req.body?.body || '').slice(0, 200);
   const urlRaw = String(req.body?.url  || '/').slice(0, 2048);
@@ -1967,10 +1969,30 @@ adminRouter.post('/push/broadcast-segmented', adminWriteLimiter, requireRole('ad
   if (!title) return res.status(400).json({ error: 'invalid_input' });
   const safeClickUrl = (urlRaw === '/') ? '/' : (safeUrl(urlRaw) || '/');
 
+  // History helper — always record the attempt (even targeted=0 /
+  // sent=0) so the admin's Campaigns panel shows every broadcast, not
+  // just the ones that found subscribers.
+  const saveHistory = async (stats) => {
+    try {
+      await PushCampaign.create({
+        name: `ส่งทันที · ${new Date().toLocaleString('th-TH', { timeZone: 'Asia/Bangkok' })}`,
+        title: String(title).slice(0, 120),
+        body: String(bodyTx).slice(0, 300),
+        url: String(safeClickUrl).slice(0, 512),
+        segment, status: 'sent', sentAt: new Date(),
+        createdBy: req.user.id,
+        stats,
+      });
+    } catch (e) { log.warn({ err: e?.message }, 'campaign_history_write_failed'); }
+  };
+
   try {
     // 1. Resolve matching device IDs.
     const ids = await resolveSegment(segment);
-    if (!ids.length) return res.json({ targeted: 0, sent: 0, failed: 0, pruned: 0 });
+    if (!ids.length) {
+      await saveHistory({ targeted: 0, sent: 0, failed: 0, pruned: 0, clicks: 0 });
+      return res.json({ targeted: 0, sent: 0, failed: 0, pruned: 0 });
+    }
 
     // 2. Prefer deviceId-keyed subscriptions (new clients send it on
     //    /push/subscribe). Fall back to an ipHash-based proxy join for
@@ -1993,7 +2015,10 @@ adminRouter.post('/push/broadcast-segmented', adminWriteLimiter, requireRole('ad
       }
     }
     const subs = [...directSubs, ...legacySubs];
-    if (!subs.length) return res.json({ targeted: ids.length, sent: 0, failed: 0, pruned: 0 });
+    if (!subs.length) {
+      await saveHistory({ targeted: ids.length, sent: 0, failed: 0, pruned: 0, clicks: 0 });
+      return res.json({ targeted: ids.length, sent: 0, failed: 0, pruned: 0 });
+    }
 
     // 4. Send with timeout + concurrency, same as broadcast.
     const payload = JSON.stringify({
@@ -2026,6 +2051,7 @@ adminRouter.post('/push/broadcast-segmented', adminWriteLimiter, requireRole('ad
       ipHash: hashIp(req.ip), userAgent: safeText(req.get('user-agent') || '', 200),
       diff: { title, url: safeClickUrl, targeted: ids.length, sent, failed, pruned: stale.length },
     });
+    await saveHistory({ targeted: ids.length, sent, failed, pruned: stale.length, clicks: 0 });
     res.json({ targeted: ids.length, sent, failed, pruned: stale.length });
   } catch (e) {
     log.warn({ err: e?.message }, 'push_segmented_error');

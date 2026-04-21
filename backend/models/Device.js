@@ -16,7 +16,11 @@ import mongoose from 'mongoose';
 const DeviceSchema = new mongoose.Schema({
   _id:             { type: String, maxlength: 40 },      // client UUIDv4
   firstSeen:       { type: Date, default: Date.now },
-  lastSeen:        { type: Date, default: Date.now, index: true },
+  // NOTE: don't use `index: true` here — the TTL index defined below
+  // (`DeviceSchema.index({ lastSeen: 1 }, { expireAfterSeconds: ... })`)
+  // already creates the only index we need. Declaring both produces the
+  // runtime warning "Duplicate schema index on {lastSeen:1}".
+  lastSeen:        { type: Date, default: Date.now },
 
   // Attribution — captured at first contact, never updated afterwards.
   sourceToken:     { type: String, default: '', maxlength: 40, index: true },

@@ -638,9 +638,18 @@ async function ensureBootstrapped() {
 export async function boot() {
   await connectDB();
   await ensureBootstrapped();
-  // Phase 3: start the scheduled push campaign worker. Safe to call
-  // whether or not VAPID is configured — the tick short-circuits when
-  // push is disabled.
+  // Phase 3: ensure VAPID. If operator set env vars, use them; else
+  // generate once and persist in AppConfig so every redeploy reuses
+  // the same keypair and existing subscribers remain valid.
+  try {
+    const { ensureVapid } = await import('./utils/vapid.js');
+    await ensureVapid();
+  } catch (e) {
+    log.warn({ err: e?.message }, 'vapid_ensure_failed');
+  }
+  // Start the scheduled push campaign worker. Safe to call whether
+  // or not VAPID resolved — the tick short-circuits when push is
+  // disabled.
   try {
     const { startScheduledPushWorker } = await import('./utils/scheduledPush.js');
     startScheduledPushWorker();
