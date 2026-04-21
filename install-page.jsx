@@ -438,16 +438,81 @@ function InstallSkeleton({ theme }) {
     <div style={{
       minHeight: '100vh',
       background: `linear-gradient(180deg, ${theme.bg} 0%, ${theme.surface} 100%)`,
-      padding: 32,
+      padding: '32px 16px',
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      position: 'relative', overflow: 'hidden',
     }}>
-      <div style={{ maxWidth: 760, margin: '0 auto' }}>
+      {/* Soft accent glow behind the card for depth */}
+      <div style={{
+        position: 'absolute', top: '30%', left: '50%',
+        width: 520, height: 520,
+        transform: 'translate(-50%, -50%)',
+        background: `radial-gradient(circle, ${theme.accent}25 0%, transparent 65%)`,
+        filter: 'blur(60px)', pointerEvents: 'none',
+      }}/>
+      <div style={{
+        position: 'relative', zIndex: 1,
+        maxWidth: 420, width: '100%',
+        borderRadius: 24, padding: 'clamp(28px, 5vw, 40px)',
+        background: theme.surface,
+        border: `1px solid ${theme.border}`,
+        boxShadow: '0 40px 90px -30px rgba(0,0,0,0.25)',
+        display: 'flex', flexDirection: 'column',
+        alignItems: 'center', gap: 20, textAlign: 'center',
+      }}>
+        {/* Rotating gradient ring + counter-rotating inner tile */}
         <div style={{
-          borderRadius: 28, padding: 36, background: theme.surface,
-          border: `1px solid ${theme.border}`, minHeight: 220,
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          color: theme.muted, fontSize: 14,
-        }}>กำลังโหลด…</div>
+          width: 80, height: 80, borderRadius: 22, padding: 2,
+          background: `conic-gradient(from 0deg, ${theme.accent}, ${theme.accent}80, ${theme.accent})`,
+          animation: 'insSpin 3.6s linear infinite',
+          boxShadow: `0 20px 50px -16px ${theme.accent}50`,
+        }}>
+          <div style={{
+            width: '100%', height: '100%', borderRadius: 20,
+            background: `linear-gradient(135deg, ${theme.surface}, ${theme.bg})`,
+            animation: 'insCounter 3.6s linear infinite',
+          }}/>
+        </div>
+        <div style={{ width: '100%' }}>
+          <div style={{
+            height: 14, width: '60%', margin: '0 auto 10px',
+            borderRadius: 7, background: theme.bg,
+            animation: 'insShimmer 1.6s ease-in-out infinite',
+          }}/>
+          <div style={{
+            height: 10, width: '85%', margin: '0 auto',
+            borderRadius: 5, background: theme.bg, opacity: 0.6,
+            animation: 'insShimmer 1.6s ease-in-out 200ms infinite',
+          }}/>
+        </div>
+        {/* Indeterminate progress sweep */}
+        <div style={{
+          width: '100%', height: 2, borderRadius: 2,
+          background: theme.bg, overflow: 'hidden', position: 'relative',
+        }}>
+          <div style={{
+            position: 'absolute', inset: 0, width: '40%',
+            background: `linear-gradient(90deg, transparent, ${theme.accent}, transparent)`,
+            animation: 'insSweep 1.4s cubic-bezier(0.45, 0.05, 0.55, 0.95) infinite',
+          }}/>
+        </div>
+        <div style={{
+          fontSize: 10.5, letterSpacing: 1.8, textTransform: 'uppercase',
+          fontWeight: 600, color: theme.muted,
+          animation: 'insPulse 2.4s ease-in-out infinite',
+        }}>กำลังเตรียมหน้าติดตั้ง</div>
       </div>
+      {/* Keyframes declared inline so the skeleton has zero external deps */}
+      <style>{`
+        @keyframes insSpin    { to { transform: rotate(360deg); } }
+        @keyframes insCounter { to { transform: rotate(-360deg); } }
+        @keyframes insShimmer { 0%,100% { opacity: 0.55; } 50% { opacity: 1; } }
+        @keyframes insSweep   { from { transform: translateX(-110%); } to { transform: translateX(260%); } }
+        @keyframes insPulse   { 0%,100% { opacity: 0.45; } 50% { opacity: 0.9; } }
+        @media (prefers-reduced-motion: reduce) {
+          [class*="ins"] { animation: none !important; }
+        }
+      `}</style>
     </div>
   );
 }

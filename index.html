@@ -109,18 +109,27 @@
     50%     { opacity: 0.4; }
   }
 
-  /* ── First-launch splash animation ─────────────────────────
-     Shown only on the truly-first app open on a device (no
-     public_cache_v1 yet). Three layered animations for a premium
-     feel: morphing conic gradient backdrop, icon that pops in with
-     an expanding halo, and three staggered loading dots. */
+  /* ── First-launch splash — "Aurora" ───────────────────────────
+     Replaces the old conic swirl with a layered premium composition:
+       • 3 drifting aurora orbs (warm + cool accents) behind a blurred
+         mask so the colour field feels alive, not static
+       • faint dot-grid overlay with radial mask → "tech blueprint" vibe
+         without shouting
+       • icon tile wrapped in a conic-gradient ring that spins slowly,
+         with a diagonal shine sweep across the glyph and two expanding
+         halo rings fired out of phase
+       • app name revealed letter-by-letter with a staggered fade-up
+       • thin indeterminate progress bar underneath
+       • tiny uppercase hint pulsing at the foot
+     Total animation budget ≤ 12 keyframe tracks, GPU-friendly (transform
+     + opacity only). prefers-reduced-motion neutralises everything that
+     could trigger vestibular discomfort. */
   .splash-root {
     position: fixed; inset: 0; z-index: 9999;
-    display: flex; flex-direction: column;
-    align-items: center; justify-content: center; gap: 28px;
+    display: flex; align-items: center; justify-content: center;
     overflow: hidden;
-    background: #1F1B17;
-    animation: splashFadeOut 420ms cubic-bezier(0.4, 0, 0.2, 1) both;
+    background: radial-gradient(ellipse at 30% 20%, #1a1510 0%, #0A0A0F 70%);
+    animation: splashFadeOut 520ms cubic-bezier(0.4, 0, 0.2, 1) both;
     animation-play-state: paused;
   }
   .splash-root.splash-exit { animation-play-state: running; }
@@ -128,55 +137,176 @@
     from { opacity: 1; }
     to   { opacity: 0; visibility: hidden; }
   }
-  .splash-bg {
-    position: absolute; inset: -40%;
-    background: conic-gradient(from 0deg,
-      #C48B3E, #B4463A, #7A5A10, #C48B3E);
-    filter: blur(80px); opacity: 0.55;
-    animation: splashSwirl 9s linear infinite;
+
+  /* Aurora orb layer — three large radial gradients drifting slowly.
+     mix-blend-mode 'screen' would be prettier but costs more on mobile
+     GPUs; plain alpha compositing looks nearly identical on a dark bg. */
+  .splash-orb {
+    position: absolute; border-radius: 50%;
+    filter: blur(90px); opacity: 0.55; will-change: transform;
+    pointer-events: none;
   }
-  @keyframes splashSwirl {
-    from { transform: rotate(0deg); }
-    to   { transform: rotate(360deg); }
+  .splash-orb-a {
+    width: 72vmin; height: 72vmin; left: -18vmin; top: -18vmin;
+    background: radial-gradient(circle, #C48B3E 0%, transparent 68%);
+    animation: orbDriftA 22s ease-in-out infinite alternate;
   }
-  .splash-icon {
+  .splash-orb-b {
+    width: 88vmin; height: 88vmin; right: -28vmin; bottom: -22vmin;
+    background: radial-gradient(circle, #B4463A 0%, transparent 68%);
+    animation: orbDriftB 28s ease-in-out infinite alternate;
+  }
+  .splash-orb-c {
+    width: 64vmin; height: 64vmin;
+    left: 40%; top: 55%; transform: translate(-50%, -50%);
+    background: radial-gradient(circle, oklch(0.60 0.18 245) 0%, transparent 68%);
+    opacity: 0.38;
+    animation: orbDriftC 34s ease-in-out infinite alternate;
+  }
+  @keyframes orbDriftA { to { transform: translate(6vmin, 8vmin) scale(1.15); } }
+  @keyframes orbDriftB { to { transform: translate(-8vmin, -6vmin) scale(1.1);  } }
+  @keyframes orbDriftC { to { transform: translate(-62%, -42%) scale(0.92);     } }
+
+  /* Dot-grid "blueprint" — the radial mask keeps it concentrated around
+     the centre so the edges stay clean. */
+  .splash-grid {
+    position: absolute; inset: 0;
+    background-image: radial-gradient(circle, rgba(255,255,255,0.07) 1px, transparent 1.5px);
+    background-size: 28px 28px;
+    mask-image: radial-gradient(ellipse at center, black 35%, transparent 78%);
+    -webkit-mask-image: radial-gradient(ellipse at center, black 35%, transparent 78%);
+    animation: gridShift 24s linear infinite;
+    pointer-events: none;
+  }
+  @keyframes gridShift {
+    from { background-position: 0 0; }
+    to   { background-position: 56px 56px; }
+  }
+
+  /* Content stack above the orb/grid layers */
+  .splash-stack {
+    position: relative; z-index: 2;
+    display: flex; flex-direction: column; align-items: center; gap: 24px;
+  }
+
+  /* Icon ring — rotating conic gradient as a 2px border around the tile */
+  .splash-icon-ring {
     position: relative;
-    width: 92px; height: 92px; border-radius: 26px;
-    background: rgba(255,255,255,0.98);
-    display: flex; align-items: center; justify-content: center;
-    font-size: 42px; font-weight: 800; color: #1F1B17;
+    width: 104px; height: 104px; border-radius: 28px; padding: 2px;
+    background: conic-gradient(from 0deg,
+      #C48B3E, #B4463A, oklch(0.60 0.18 245), #7A5A10, #C48B3E);
     box-shadow:
-      0 30px 80px -20px rgba(196,139,62,0.6),
-      0 0 0 1px rgba(255,255,255,0.1);
-    animation: splashIconIn 700ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+      0 40px 100px -20px rgba(196,139,62,0.55),
+      0 0 0 1px rgba(255,255,255,0.04);
+    animation:
+      ringSpin 4.5s linear infinite,
+      iconPop  760ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
   }
-  @keyframes splashIconIn {
-    from { opacity: 0; transform: scale(0.4) rotate(-12deg); }
-    to   { opacity: 1; transform: scale(1) rotate(0deg); }
+  @keyframes ringSpin { to { transform: rotate(360deg); } }
+  @keyframes iconPop {
+    from { opacity: 0; transform: scale(0.35); }
+    to   { opacity: 1; transform: scale(1); }
   }
-  .splash-icon::before {
+  /* Two halo rings firing out of phase */
+  .splash-icon-ring::before,
+  .splash-icon-ring::after {
     content: '';
-    position: absolute; inset: -12px; border-radius: 32px;
-    border: 2px solid rgba(255,255,255,0.3);
-    animation: splashHalo 1.8s ease-out infinite;
+    position: absolute; inset: -10px; border-radius: 32px;
+    border: 1.5px solid rgba(196,139,62,0.4);
+    animation: splashHalo 2.4s ease-out infinite;
+    pointer-events: none;
   }
+  .splash-icon-ring::after { animation-delay: 1.2s; }
   @keyframes splashHalo {
-    0%   { transform: scale(1);   opacity: 0.8; }
-    100% { transform: scale(1.5); opacity: 0;   }
+    0%   { transform: scale(1);   opacity: 0.75; }
+    100% { transform: scale(1.65); opacity: 0;   }
   }
-  .splash-dots {
-    display: flex; gap: 8px;
+
+  .splash-icon {
+    width: 100%; height: 100%; border-radius: 26px;
+    background: linear-gradient(135deg, #FFFFFF 0%, #F2EFE8 100%);
+    display: flex; align-items: center; justify-content: center;
+    position: relative; overflow: hidden;
+    font-size: 46px; font-weight: 800; color: #1F1B17;
+    /* Counter-rotate so the glyph stays upright while the ring spins */
+    animation: iconCounterSpin 4.5s linear infinite;
   }
-  .splash-dots span {
-    width: 8px; height: 8px; border-radius: 50%;
-    background: rgba(255,255,255,0.85);
-    animation: splashDot 1.2s ease-in-out infinite;
+  @keyframes iconCounterSpin { to { transform: rotate(-360deg); } }
+  .splash-icon img {
+    width: 100%; height: 100%; object-fit: cover; border-radius: 26px;
   }
-  .splash-dots span:nth-child(2) { animation-delay: 0.16s; }
-  .splash-dots span:nth-child(3) { animation-delay: 0.32s; }
-  @keyframes splashDot {
-    0%, 80%, 100% { transform: translateY(0);    opacity: 0.4; }
-    40%           { transform: translateY(-6px); opacity: 1;   }
+  /* Diagonal shine sweep */
+  .splash-icon::after {
+    content: ''; position: absolute; inset: 0;
+    background: linear-gradient(115deg,
+      transparent 30%, rgba(255,255,255,0.7) 50%, transparent 70%);
+    transform: translateX(-120%) skewX(-20deg);
+    animation: iconShine 3.2s ease-in-out 700ms infinite;
+    pointer-events: none;
+  }
+  @keyframes iconShine {
+    0%       { transform: translateX(-120%) skewX(-20deg); }
+    60%, 100% { transform: translateX(140%)  skewX(-20deg); }
+  }
+
+  /* App name — letter-by-letter fade-up */
+  .splash-name {
+    display: flex; gap: 1px; font-size: 22px; font-weight: 700;
+    letter-spacing: 0.3px; color: #fff;
+    font-family: "IBM Plex Sans Thai", -apple-system, system-ui, sans-serif;
+    text-shadow: 0 2px 20px rgba(196,139,62,0.3);
+    margin-top: 4px;
+  }
+  .splash-name span {
+    opacity: 0;
+    transform: translateY(10px);
+    animation: letterIn 480ms cubic-bezier(0.2, 0.8, 0.3, 1) both;
+    display: inline-block;
+  }
+  @keyframes letterIn {
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  /* Indeterminate progress sweep */
+  .splash-progress {
+    width: 180px; height: 2px;
+    background: rgba(255,255,255,0.08);
+    border-radius: 2px; overflow: hidden; position: relative;
+  }
+  .splash-progress-fill {
+    position: absolute; inset: 0; width: 40%; border-radius: 2px;
+    background: linear-gradient(90deg,
+      transparent 0%, #C48B3E 30%, oklch(0.78 0.15 55) 50%, #C48B3E 70%, transparent 100%);
+    animation: progressSweep 1.6s cubic-bezier(0.45, 0.05, 0.55, 0.95) infinite;
+  }
+  @keyframes progressSweep {
+    from { transform: translateX(-110%); }
+    to   { transform: translateX(260%);  }
+  }
+
+  /* Foot hint */
+  .splash-hint {
+    font-size: 10.5px; letter-spacing: 1.8px; text-transform: uppercase;
+    color: rgba(255,255,255,0.48); font-weight: 600;
+    animation: hintPulse 2.4s ease-in-out infinite;
+  }
+  @keyframes hintPulse {
+    0%, 100% { opacity: 0.45; }
+    50%      { opacity: 0.9;  }
+  }
+
+  /* Respect users who opt out of motion — kill everything that moves. */
+  @media (prefers-reduced-motion: reduce) {
+    .splash-orb, .splash-grid,
+    .splash-icon-ring, .splash-icon,
+    .splash-icon-ring::before, .splash-icon-ring::after,
+    .splash-icon::after, .splash-progress-fill,
+    .splash-name span, .splash-hint {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transform: none !important;
+    }
+    .splash-name span { opacity: 1 !important; }
   }
   .caption {
     font-size: 11px; letter-spacing: 1.2px; text-transform: uppercase;
@@ -221,13 +351,26 @@
   regex-incompatible browser, etc.).
 -->
 <div id="root">
-  <div id="__boot_fallback" style="min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#1F1B17;color:#fff;font-family:system-ui,-apple-system;gap:18px;">
-    <div style="width:64px;height:64px;border-radius:18px;background:rgba(255,255,255,0.08);animation:__bpulse 1.4s ease-in-out infinite;"></div>
-    <div style="font-size:13px;opacity:0.65;letter-spacing:1.2px;text-transform:uppercase;">กำลังโหลด…</div>
-    <div id="__boot_err" style="display:none;max-width:440px;padding:16px 20px;border-radius:12px;background:rgba(255,255,255,0.08);color:#FBBF7B;font-size:12px;line-height:1.6;text-align:center;"></div>
+  <div id="__boot_fallback" style="position:relative;min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;background:radial-gradient(ellipse at 30% 20%,#1a1510 0%,#0A0A0F 70%);color:#fff;font-family:'IBM Plex Sans Thai',-apple-system,system-ui,sans-serif;gap:22px;overflow:hidden;">
+    <!-- pre-React fallback: the real FirstLaunchSplash is richer, but
+         if scripts never load the user still sees a composed loader
+         matching the theme, not a blank page. -->
+    <div style="position:absolute;left:-18vmin;top:-18vmin;width:72vmin;height:72vmin;border-radius:50%;background:radial-gradient(circle,#C48B3E 0%,transparent 68%);filter:blur(90px);opacity:0.55;animation:__bOrbA 22s ease-in-out infinite alternate;pointer-events:none;"></div>
+    <div style="position:absolute;right:-28vmin;bottom:-22vmin;width:88vmin;height:88vmin;border-radius:50%;background:radial-gradient(circle,#B4463A 0%,transparent 68%);filter:blur(90px);opacity:0.55;animation:__bOrbB 28s ease-in-out infinite alternate;pointer-events:none;"></div>
+    <div style="position:relative;z-index:2;width:88px;height:88px;border-radius:24px;padding:2px;background:conic-gradient(from 0deg,#C48B3E,#B4463A,#7A5A10,#C48B3E);box-shadow:0 40px 100px -20px rgba(196,139,62,0.55);animation:__bSpin 4s linear infinite;">
+      <div style="width:100%;height:100%;border-radius:22px;background:linear-gradient(135deg,#FFFFFF 0%,#F2EFE8 100%);animation:__bCounter 4s linear infinite;"></div>
+    </div>
+    <div style="position:relative;z-index:2;font-size:11px;letter-spacing:1.8px;text-transform:uppercase;color:rgba(255,255,255,0.55);font-weight:600;animation:__bPulse 2.4s ease-in-out infinite;">กำลังโหลด</div>
+    <div id="__boot_err" style="display:none;position:relative;z-index:2;max-width:440px;padding:16px 20px;border-radius:12px;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.08);color:#FBBF7B;font-size:12px;line-height:1.6;text-align:center;backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);"></div>
   </div>
 </div>
-<style>@keyframes __bpulse{0%,100%{opacity:0.6;transform:scale(1)}50%{opacity:1;transform:scale(1.08)}}</style>
+<style>
+  @keyframes __bPulse { 0%,100% { opacity:0.45 } 50% { opacity:0.9 } }
+  @keyframes __bSpin  { to { transform: rotate(360deg) } }
+  @keyframes __bCounter { to { transform: rotate(-360deg) } }
+  @keyframes __bOrbA  { to { transform: translate(6vmin,8vmin) scale(1.15) } }
+  @keyframes __bOrbB  { to { transform: translate(-8vmin,-6vmin) scale(1.1) } }
+</style>
 <noscript>
   <div style="padding: 40px; text-align: center; font-family: system-ui;">
     แอปนี้ต้องใช้ JavaScript · กรุณาเปิด JavaScript ในเบราว์เซอร์
@@ -887,24 +1030,44 @@ function UserOnlyPage() {
 }
 
 // Premium splash — only shown on the FIRST-EVER app open on a device
-// (public_cache_v1 empty). Three layered effects:
-//   • conic-gradient backdrop that slowly rotates
-//   • icon tile that pops in with a spring + expanding halo ring
-//   • three staggered loading dots
-// Swaps to UserApp when hydrated, so the animation runs for exactly
-// as long as the backend fetch takes (usually 200-600ms).
+// (public_cache_v1 empty). Layers: drifting aurora orbs, blueprint
+// dot grid, rotating conic gradient ring around the icon tile, shine
+// sweep across the glyph, dual halo rings, staggered letter reveal
+// for the app name, indeterminate progress sweep, and a pulsing hint.
+// Swaps to UserApp when hydrated, so the show runs for exactly as
+// long as the backend fetch takes (usually 200-600ms) — every
+// animation is loopable so it looks intentional at any duration.
 function FirstLaunchSplash({ appName, appIcon }) {
-  const letter = ((appName || 'A').trim().slice(0, 1) || 'A').toUpperCase();
+  const name = String(appName || 'HOF88').trim().slice(0, 24) || 'HOF88';
+  const letter = (name.slice(0, 1) || 'A').toUpperCase();
   const iconSrc = (appIcon && typeof absolutizeMedia === 'function') ? absolutizeMedia(appIcon) : appIcon;
+  const chars = Array.from(name);
   return (
     <div className="splash-root">
-      <div className="splash-bg"/>
-      <div className="splash-icon">
-        {iconSrc
-          ? <img src={iconSrc} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 26 }}/>
-          : letter}
+      <div className="splash-orb splash-orb-a"/>
+      <div className="splash-orb splash-orb-b"/>
+      <div className="splash-orb splash-orb-c"/>
+      <div className="splash-grid"/>
+      <div className="splash-stack">
+        <div className="splash-icon-ring">
+          <div className="splash-icon">
+            {iconSrc
+              ? <img src={iconSrc} alt=""/>
+              : letter}
+          </div>
+        </div>
+        <div className="splash-name" aria-label={name}>
+          {chars.map((ch, i) => (
+            <span key={i} style={{ animationDelay: (260 + i * 55) + 'ms' }}>
+              {ch === ' ' ? '\u00A0' : ch}
+            </span>
+          ))}
+        </div>
+        <div className="splash-progress">
+          <div className="splash-progress-fill"/>
+        </div>
+        <div className="splash-hint">กำลังโหลด</div>
       </div>
-      <div className="splash-dots"><span/><span/><span/></div>
     </div>
   );
 }
