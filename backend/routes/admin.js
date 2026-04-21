@@ -14,7 +14,7 @@ import { requireAuth, requireRole } from '../middleware/auth.js';
 import { verifyCsrf } from '../middleware/csrf.js';
 import { adminWriteLimiter, uploadLimiter } from '../middleware/rateLimit.js';
 import { validate, configBody, createUserBody } from '../middleware/validate.js';
-import { uploadSingle, uploadApk, isApkBuffer, isImageBuffer, MIME_TO_EXT, APK_MIME } from '../middleware/upload.js';
+import { uploadSingle, uploadApk, isApkBuffer, isImageBuffer, verifyApkApiBase, MIME_TO_EXT, APK_MIME } from '../middleware/upload.js';
 import { MediaAsset } from '../models/MediaAsset.js';
 import { sanitizeConfig, hashIp, safeText, safeUrl } from '../utils/sanitize.js';
 import { revokeAllForUser, revokeOne } from '../utils/tokens.js';
@@ -415,6 +415,18 @@ adminRouter.post('/upload/apk', uploadLimiter, requireRole('admin'), async (req,
   if (!req.file) return res.status(400).json({ error: 'no_file' });
   // Verify real APK bytes — MIME is client-supplied and untrustworthy.
   if (!isApkBuffer(req.file.buffer)) return res.status(415).json({ error: 'not_an_apk' });
+
+  // Verify the APK was built with window.API_BASE pointing to THIS backend.
+  // Without this guard admins can (and have) uploaded a locally-built APK
+  // missing API_BASE, users install it, the Capacitor WebView falls back
+  // to DEFAULT_STATE, and admin edits never appear on the device. Catch
+  // this at upload time instead of after users complain.
+  const expectedOrigin = backendOriginOf(req);
+  const check = verifyApkApiBase(req.file.buffer, expectedOrigin);
+  if (!check.ok) {
+    log.warn({ code: check.code, expectedOrigin, size: req.file.size }, 'apk_upload_rejected');
+    return res.status(400).json({ error: check.code, detail: check.detail });
+  }
 
   const id = crypto.randomBytes(12).toString('hex') + '.apk';
   const origName = safeText(req.file.originalname || 'app.apk', 120);

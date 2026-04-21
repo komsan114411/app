@@ -956,6 +956,9 @@ function ApkUploader({ currentUrl, onUploaded }) {
       if (e.message === 'file_too_large')       setError('ไฟล์ใหญ่เกิน 15 MB');
       else if (e.message === 'unsupported_media_type') setError('ชนิดไฟล์ไม่รองรับ — ต้องเป็น .apk');
       else if (e.message === 'not_an_apk')      setError('ไฟล์ไม่ใช่ APK ที่ถูกต้อง (ตรวจ ZIP signature ล้มเหลว)');
+      else if (e.message === 'apk_missing_api_base') setError((e.responseBody?.detail) || 'APK ไม่มี window.API_BASE — ต้อง build ใหม่ผ่านปุ่ม "Build APK" ด้านล่าง');
+      else if (e.message === 'apk_wrong_api_base')   setError((e.responseBody?.detail) || 'APK ชี้ไป backend คนละตัว');
+      else if (e.message === 'apk_invalid_structure') setError((e.responseBody?.detail) || 'ไม่ใช่ APK ที่ build จาก Capacitor ของ project นี้');
       else if (e.message === 'forbidden')       setError('ต้องเป็น role admin');
       else                                       setError('อัปโหลดไม่สำเร็จ: ' + (e.message || ''));
     } finally {
