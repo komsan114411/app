@@ -181,7 +181,7 @@ const api = {
   // Phase 3: re-engagement
   async previewSegment(segment)         { return request('/api/admin/push/segment/preview', { method: 'POST', body: { segment }, auth: true }); },
   async broadcastSegmented(body)        { return request('/api/admin/push/broadcast-segmented', { method: 'POST', body, auth: true }); },
-  async listCampaigns()                 { return request('/api/admin/push/campaigns', { auth: true }); },
+  async listCampaigns(page = 0)         { return request(`/api/admin/push/campaigns?page=${page}`, { auth: true }); },
   async createCampaign(body)            { return request('/api/admin/push/campaigns', { method: 'POST', body, auth: true }); },
   async deleteCampaign(id)              { return request(`/api/admin/push/campaigns/${encodeURIComponent(id)}`, { method: 'DELETE', auth: true }); },
   async getInactive(days = 14)          { return request(`/api/admin/engagement/inactive?days=${days}`, { auth: true }); },

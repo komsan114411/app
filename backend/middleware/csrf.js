@@ -20,6 +20,12 @@ const cookieOpts = () => ({
 const clearCookieOpts = () => ({
   path: '/',
   domain: env.COOKIE_DOMAIN || undefined,
+  // Must match the original cookie's flags for browsers to honour the
+  // clear: a Secure cookie can only be cleared by a Secure Set-Cookie
+  // directive. Without this, logout may not actually remove the CSRF
+  // cookie on Chromium.
+  secure: env.COOKIE_SECURE,
+  sameSite: 'strict',
 });
 
 export function ensureCsrfCookie(req, res, next) {

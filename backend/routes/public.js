@@ -9,6 +9,7 @@ import { Device } from '../models/Device.js';
 import { EventLog, EVENT_TYPES } from '../models/EventLog.js';
 import { PushCampaign } from '../models/PushCampaign.js';
 import { getPublicKey, isConfigured as isPushConfigured } from '../utils/vapid.js';
+import { isAllowedPushEndpoint } from '../utils/pushAllowlist.js';
 import mongoose from 'mongoose';
 import { publicReadLimiter, trackLimiter } from '../middleware/rateLimit.js';
 import { validate, trackBody } from '../middleware/validate.js';
@@ -364,30 +365,37 @@ publicRouter.get('/admin-gate/:token', publicReadLimiter, async (req, res) => {
   res.json({ ok: true });
 });
 
-// Erase all data this requester might have generated. Two axes:
-//   1. Anything stored by IP hash (ClickEvent, EventLog, error rows)
+// Erase all data this requester might have generated:
+//   1. Anything stored by IP hash (ClickEvent, EventLog, PushSubscription)
 //   2. If they POST a deviceId we recognise, delete the Device doc and
-//      everything ever keyed to it (EventLog, future Session doc).
-// Silent 204 either way — we never tell the caller what was found.
+//      everything ever keyed to it (EventLog, PushSubscription)
+// Right-to-erasure (GDPR Art.17, PDPA §19): push subscriptions MUST be
+// cleared along with analytics events — without this the operator could
+// keep pushing notifications to a user who asked to be forgotten.
+// Silent 204 if we have nothing to go on.
 publicRouter.post('/privacy/forget', publicReadLimiter, async (req, res) => {
   const ipHash = hashIp(req.ip);
   const bodyDev = validateDeviceId((req.body && req.body.deviceId) || req.get('x-device'));
   if (!ipHash && !bodyDev) return res.status(204).end();
-  let clicks = 0, events = 0, devices = 0;
+  let clicks = 0, events = 0, devices = 0, subs = 0;
   try {
     if (ipHash) {
       const r1 = await ClickEvent.deleteMany({ ipHash });
       clicks = r1.deletedCount || 0;
       const r2 = await EventLog.deleteMany({ ipHash });
       events += r2.deletedCount || 0;
+      const r2p = await PushSubscription.deleteMany({ ipHash });
+      subs += r2p.deletedCount || 0;
     }
     if (bodyDev) {
       const r3 = await EventLog.deleteMany({ deviceId: bodyDev });
       events += r3.deletedCount || 0;
       const r4 = await Device.deleteOne({ _id: bodyDev });
       devices = r4.deletedCount || 0;
+      const r4p = await PushSubscription.deleteMany({ deviceId: bodyDev });
+      subs += r4p.deletedCount || 0;
     }
-    res.json({ clicks, events, devices });
+    res.json({ clicks, events, devices, subs });
   } catch { res.status(204).end(); }
 });
 
@@ -398,31 +406,10 @@ publicRouter.get('/push/vapid-key', (req, res) => {
   res.json({ publicKey: pub });
 });
 
-// Allow-list of known Web Push service hosts. An attacker who POSTs a
-// subscription with endpoint=http://169.254.169.254/... or an internal
-// URL would otherwise turn `admin → /push/broadcast` into a blind SSRF
-// (the web-push lib POSTs to whatever endpoint we stored). Restricting
-// at subscribe time is the right place — broadcast is server-trusted.
-// Subdomains of the base domains below are allowed; everything else
-// is rejected. Public Web Push spec: only these services exist.
-const PUSH_HOST_ALLOWLIST = [
-  'fcm.googleapis.com',                 // Chrome / Chromium (Android + desktop)
-  'updates.push.services.mozilla.com',  // Firefox
-  'notify.windows.com',                 // Edge (matches *.notify.windows.com)
-  'push.apple.com',                     // Safari 16+ (matches *.push.apple.com)
-];
-
-function isAllowedPushEndpoint(raw) {
-  if (typeof raw !== 'string' || raw.length > 1024) return false;
-  let u;
-  try { u = new URL(raw); } catch { return false; }
-  if (u.protocol !== 'https:') return false;
-  const host = u.hostname.toLowerCase();
-  for (const base of PUSH_HOST_ALLOWLIST) {
-    if (host === base || host.endsWith('.' + base)) return true;
-  }
-  return false;
-}
+// Allow-list moved to utils/pushAllowlist.js so public.js and admin.js
+// share a single source of truth. Earlier duplicate had drifted — the
+// admin.js copy was missing the Mozilla host, which caused Firefox
+// subscriptions to be silently pruned at broadcast time.
 
 publicRouter.post('/push/subscribe', publicReadLimiter, async (req, res) => {
   const { endpoint, keys } = req.body || {};

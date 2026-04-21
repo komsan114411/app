@@ -111,7 +111,13 @@ export async function rotateRefresh(rawToken, meta = {}) {
       // network address it's almost certainly a stolen cookie racing the
       // real client, so treat it as reuse.
       const graceIp = (meta.ip || '').slice(0, 64);
-      if (existing.rotatedIp && graceIp && existing.rotatedIp !== graceIp) {
+      // Strict comparison: if either side is missing an IP OR they
+      // don't match, treat as reuse. The previous check
+      // `existing.rotatedIp && graceIp && existing.rotatedIp !== graceIp`
+      // allowed the empty-IP case (both '') to pass — a request from
+      // an attacker proxy that stripped X-Forwarded-For would match
+      // the original rotation that also had no IP.
+      if (!existing.rotatedIp || !graceIp || existing.rotatedIp !== graceIp) {
         return { reuse: true, userId: existing.userId, jti };
       }
       return { grace: true, userId: existing.userId, jti };

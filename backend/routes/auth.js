@@ -187,20 +187,20 @@ authRouter.post('/refresh', async (req, res) => {
 
   const result = await rotateRefresh(raw, { ip: req.ip, userAgent: req.get('user-agent') });
   if (!result) {
-    res.clearCookie(REFRESH_COOKIE, { path: '/api/auth', domain: env.COOKIE_DOMAIN || undefined });
+    res.clearCookie(REFRESH_COOKIE, { path: '/api/auth', domain: env.COOKIE_DOMAIN || undefined, secure: env.COOKIE_SECURE, sameSite: 'strict' });
     return res.status(401).json({ error: 'invalid_refresh' });
   }
   if (result.reuse) {
     log.warn({ ip: req.ip, userId: String(result.userId) }, 'refresh_reuse_detected');
     await revokeAllForUser(result.userId, 'reuse_detected');
     await User.findOneAndUpdate({ _id: result.userId }, { $inc: { tokenVersion: 1 } });
-    res.clearCookie(REFRESH_COOKIE, { path: '/api/auth', domain: env.COOKIE_DOMAIN || undefined });
+    res.clearCookie(REFRESH_COOKIE, { path: '/api/auth', domain: env.COOKIE_DOMAIN || undefined, secure: env.COOKIE_SECURE, sameSite: 'strict' });
     return res.status(401).json({ error: 'invalid_refresh' });
   }
 
   const user = await User.findById(result.userId);
   if (!user || user.disabledAt) {
-    res.clearCookie(REFRESH_COOKIE, { path: '/api/auth', domain: env.COOKIE_DOMAIN || undefined });
+    res.clearCookie(REFRESH_COOKIE, { path: '/api/auth', domain: env.COOKIE_DOMAIN || undefined, secure: env.COOKIE_SECURE, sameSite: 'strict' });
     return res.status(401).json({ error: 'invalid_refresh' });
   }
   if (result.grace) return res.json({ accessToken: signAccess(user) });

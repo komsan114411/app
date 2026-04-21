@@ -286,14 +286,28 @@ function LivePanel() {
       }
     };
 
-    open();
-    // Proactive re-mint every 90 s — well before the 120 s TTL.
-    refreshTimer = setInterval(() => { if (!cancelled) open(); }, 90_000);
+    // Start the stream + the re-mint interval only while the admin
+    // tab is visible. A backgrounded tab shouldn't hold an SSE
+    // connection or hit /events/mint-token every 90 s for hours.
+    const start = () => {
+      if (refreshTimer) return;
+      open();
+      refreshTimer = setInterval(() => { if (!cancelled) open(); }, 90_000);
+    };
+    const stop = () => {
+      if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null; }
+      if (es) { try { es.close(); } catch {} es = null; }
+      setConnected(false);
+    };
+    if (typeof document !== 'undefined' && !document.hidden) start();
+    const onVis = () => { if (document.hidden) stop(); else start(); };
+    if (typeof document !== 'undefined') document.addEventListener('visibilitychange', onVis);
 
     return () => {
       cancelled = true;
       if (refreshTimer) clearInterval(refreshTimer);
       if (es) { try { es.close(); } catch {} }
+      if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', onVis);
     };
   }, []);
   return (

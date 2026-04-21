@@ -25,8 +25,24 @@ import { log } from './logger.js';
 
 let _publicKey = '';
 let _configured = false;
+// Shared in-flight promise so two concurrent callers await the same
+// setup pass. Without this guard, a second caller that arrived while
+// the first was awaiting getAppConfig() could independently read the
+// doc, generate a fresh pair, and call setVapidDetails again — racing
+// to decide which pair web-push ends up wired with.
+let _ensurePromise = null;
 
 export async function ensureVapid() {
+  if (_configured) return _publicKey;
+  if (_ensurePromise) return _ensurePromise;
+  _ensurePromise = (async () => {
+    try { return await _doEnsure(); }
+    finally { _ensurePromise = null; }
+  })();
+  return _ensurePromise;
+}
+
+async function _doEnsure() {
   if (_configured) return _publicKey;
 
   // 1. Operator-configured via env — honour it.

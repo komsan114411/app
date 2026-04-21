@@ -10,6 +10,7 @@ import { Device } from '../models/Device.js';
 import { EventLog } from '../models/EventLog.js';
 import { PushCampaign } from '../models/PushCampaign.js';
 import { isConfigured as isPushConfigured } from '../utils/vapid.js';
+import { isAllowedPushEndpoint } from '../utils/pushAllowlist.js';
 import { AuditLog } from '../models/AuditLog.js';
 import { User } from '../models/User.js';
 import { RefreshToken } from '../models/RefreshToken.js';
@@ -1045,7 +1046,12 @@ adminRouter.get('/time-to-first', requireRole('admin', 'editor'), async (req, re
     { $match: { ms: { $gte: 0, $lt: 60 * 60_000 } } },  // cap absurdities at 1 hour
     { $group: {
         _id: null, devices: { $sum: 1 },
-        avg: { $avg: '$ms' }, median: { $avg: '$ms' },  // rough — true median via $percentile below
+        avg: { $avg: '$ms' },
+        // intentionally no "median" here — an $avg would be misleading.
+        // True p50 comes from the $percentile aggregation below when
+        // Mongo 7+ is available. On older Mongo `percentiles` is null
+        // and the client renders "—" for median rather than showing
+        // the mean labelled as median.
     } },
   ]);
 
@@ -1326,6 +1332,11 @@ adminRouter.get('/events/stream', async (req, res) => {
   if (!['admin', 'editor'].includes(entry.role)) {
     return res.status(403).json({ error: 'forbidden' });
   }
+  // True single-use: consume the token now. The mint endpoint says
+  // "single-use on the server side"; previously the token could be
+  // reused for its full 2-minute TTL. The admin client re-mints
+  // every 90 s anyway, so a consume-on-connect doesn't break UX.
+  _sseTokens.delete(tok);
   // Force-uncompressed so chunks flush live. The compression middleware
   // respects the x-no-compression marker (see server.js:311) and won't
   // sit on the response buffer waiting for it to fill.
@@ -1833,26 +1844,12 @@ adminRouter.post('/push/broadcast', adminWriteLimiter, requireRole('admin'), asy
   // against the known push-service allowlist at broadcast time too.
   // /push/subscribe enforces this on new rows, but legacy rows stored
   // before the allowlist was added could have arbitrary URLs — we must
-  // never hand them to web-push.sendNotification.
-  const PUSH_HOST_ALLOWLIST = [
-    'fcm.googleapis.com',
-    'updates.push.services.mozilla.com',
-    'notify.windows.com',
-    'push.apple.com',
-  ];
-  function isSafePushEndpoint(raw) {
-    if (typeof raw !== 'string' || raw.length > 1024) return false;
-    let u; try { u = new URL(raw); } catch { return false; }
-    if (u.protocol !== 'https:') return false;
-    const h = u.hostname.toLowerCase();
-    for (const base of PUSH_HOST_ALLOWLIST) {
-      if (h === base || h.endsWith('.' + base)) return true;
-    }
-    return false;
-  }
+  // never hand them to web-push.sendNotification. Allowlist is shared
+  // with public.js via utils/pushAllowlist.js so the two surfaces can't
+  // drift.
   const rejectedEndpoints = [];
   const safeSubs = subs.filter(s => {
-    if (isSafePushEndpoint(s.endpoint)) return true;
+    if (isAllowedPushEndpoint(s.endpoint)) return true;
     rejectedEndpoints.push(s.endpoint);
     return false;
   });
@@ -2075,22 +2072,53 @@ adminRouter.post('/push/broadcast-segmented', adminWriteLimiter, requireRole('ad
 });
 
 // Campaign CRUD — admin saves templates, schedules them, or sends now.
+// Paginated: ?page=0..N, page size fixed at 50. Older sends stay
+// accessible instead of falling off the hard 100-row cap.
 adminRouter.get('/push/campaigns', requireRole('admin'), async (req, res) => {
-  const rows = await PushCampaign.find({}).sort({ createdAt: -1 }).limit(100).lean();
-  res.json({ rows });
+  const page = Math.max(0, Math.min(100, parseInt(req.query.page, 10) || 0));
+  const size = 50;
+  const [rows, total] = await Promise.all([
+    PushCampaign.find({}).sort({ createdAt: -1 }).skip(page * size).limit(size).lean(),
+    PushCampaign.estimatedDocumentCount(),
+  ]);
+  res.json({ rows, page, size, total });
 });
+
+// Whitelist-shaped segment validator. Accepting `segment || {}` raw
+// let callers stuff in Mongo operators ({$ne: null}) that downstream
+// $match / RegExp would happily treat as real values. zod coerces +
+// rejects unknown keys.
+const segmentShape = z.object({
+  inactiveDays:   z.number().int().min(0).max(3650).optional(),
+  activeDays:     z.number().int().min(0).max(3650).optional(),
+  newWithinDays:  z.number().int().min(0).max(3650).optional(),
+  clickedButton:  z.string().max(64).optional(),
+  sourceToken:    z.string().max(40).optional(),
+  utmSource:      z.string().max(40).optional(),
+  utmCampaign:    z.string().max(60).optional(),
+  platform:       z.string().max(16).optional(),
+  locale:         z.string().max(16).optional(),
+}).strict();
 
 adminRouter.post('/push/campaigns', adminWriteLimiter, requireRole('admin'), async (req, res) => {
   const { name, title, body, url, segment, sendAt } = req.body || {};
   if (!name || !title) return res.status(400).json({ error: 'invalid_input' });
+  const parsedSegment = segmentShape.safeParse(segment || {});
+  if (!parsedSegment.success) {
+    return res.status(400).json({ error: 'invalid_segment', issues: parsedSegment.error.issues });
+  }
+  const parsedSendAt = sendAt ? new Date(sendAt) : null;
+  if (parsedSendAt && isNaN(parsedSendAt.getTime())) {
+    return res.status(400).json({ error: 'invalid_sendAt' });
+  }
   const doc = await PushCampaign.create({
     name: String(name).slice(0, 120),
     title: String(title).slice(0, 120),
     body: String(body || '').slice(0, 300),
     url: String(url || '/').slice(0, 512),
-    segment: segment || {},
-    sendAt: sendAt ? new Date(sendAt) : null,
-    status: sendAt ? 'scheduled' : 'draft',
+    segment: parsedSegment.data,
+    sendAt: parsedSendAt,
+    status: parsedSendAt ? 'scheduled' : 'draft',
     createdBy: req.user.id,
   });
   await AuditLog.create({

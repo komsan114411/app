@@ -145,11 +145,11 @@ function appendParam(url, key, value) {
 // Recovery window: campaigns that have been in 'sending' for longer
 // than this are assumed to belong to a crashed worker and get flipped
 // back to 'scheduled' so another replica can pick them up. The window
-// must be longer than any realistic send round — we allow 15 minutes,
-// well above the worst-case (5000 subs × 5s timeout / 10 concurrency
-// = ~42 min, but that's unreachable because PUSH_MAX_SUBS is 5000 and
-// our concurrency + timeout numbers cap real sends under 10 min).
-const STUCK_RECOVERY_MS = 15 * 60_000;
+// must be LONGER than any realistic send round — worst-case math is
+// 5000 subs × 5 s timeout / 10 concurrency = ~42 min. We set 45 min so
+// a legitimately long send round (lots of flaky endpoints that all
+// hit the 5 s timeout) doesn't get clobbered mid-flight.
+const STUCK_RECOVERY_MS = 45 * 60_000;
 
 async function recoverStuck() {
   const cutoff = new Date(Date.now() - STUCK_RECOVERY_MS);
