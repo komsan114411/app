@@ -190,6 +190,7 @@ const api = {
   async getSankey(days = 30)            { return request(`/api/admin/sankey?days=${days}`, { auth: true }); },
   async getAnomaly()                    { return request('/api/admin/anomaly', { auth: true }); },
   async getGeoLocale(days = 30)         { return request(`/api/admin/geo/locale?days=${days}`, { auth: true }); },
+  async mintSseToken()                  { return request('/api/admin/events/mint-token', { method: 'POST', auth: true }); },
   async getAudit(opts = {}) {
     const q = new URLSearchParams({ limit: String(opts.limit || 50) });
     if (opts.cursor) q.set('cursor', opts.cursor);

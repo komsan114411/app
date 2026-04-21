@@ -20,6 +20,16 @@ import webPush from 'web-push';
 import { env } from '../config/env.js';
 import { log } from './logger.js';
 
+// web-push stores VAPID config as module-level state. In practice
+// admin.js configures it at import time and this worker inherits the
+// shared state, but we re-configure here too so the worker is
+// self-contained and won't silently send to the stub. Idempotent.
+if (env.PUSH_VAPID_PUBLIC && env.PUSH_VAPID_PRIVATE) {
+  try {
+    webPush.setVapidDetails(env.PUSH_VAPID_SUBJECT, env.PUSH_VAPID_PUBLIC, env.PUSH_VAPID_PRIVATE);
+  } catch (e) { log.warn({ err: e.message }, 'vapid_worker_config_invalid'); }
+}
+
 const CONCURRENCY = 10;
 const TIMEOUT_MS  = 5000;
 const INTERVAL_MS = 60_000;

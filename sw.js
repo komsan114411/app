@@ -1,6 +1,6 @@
 // sw.js — Service worker: offline shell + stale-while-revalidate + web push.
 
-const VERSION = 'v49';
+const VERSION = 'v50';
 const SHELL = 'shell-' + VERSION;
 
 // Public-surface JSX only. Admin-only bundles (auth-gate, admin-app,
@@ -104,6 +104,8 @@ async function queuePush(body, endpointPath) {
     });
   } catch {}
 }
+const OFFLINE_MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000;  // drop rows older than 14d
+
 async function drainQueue() {
   try {
     const db = await idbOpen();
@@ -118,19 +120,31 @@ async function drainQueue() {
       };
       req.onerror = () => ng(req.error);
     });
+    const now = Date.now();
+    const deleteKey = (key) => new Promise((ok, ng) => {
+      const tx = db.transaction(OFFLINE_STORE, 'readwrite');
+      tx.objectStore(OFFLINE_STORE).delete(key);
+      tx.oncomplete = ok; tx.onerror = () => ng(tx.error);
+    });
     for (const r of rows) {
+      // Stale cleanup — server-side TTL is 90d but queued events from
+      // 14d+ ago represent a long offline stretch where the deviceId
+      // and sourceToken context are almost certainly obsolete. Drop
+      // them instead of replaying.
+      if (r.value.at && (now - r.value.at) > OFFLINE_MAX_AGE_MS) {
+        await deleteKey(r.key).catch(() => {});
+        continue;
+      }
       try {
-        await fetch(r.value.endpointPath || '/api/track/event', {
+        const res = await fetch(r.value.endpointPath || '/api/track/event', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: r.value.body,
         });
-        // Delete on success.
-        await new Promise((ok, ng) => {
-          const tx = db.transaction(OFFLINE_STORE, 'readwrite');
-          tx.objectStore(OFFLINE_STORE).delete(r.key);
-          tx.oncomplete = ok; tx.onerror = () => ng(tx.error);
-        });
+        // Delete on success OR on permanent 4xx (won't succeed by retry).
+        if (res.ok || (res.status >= 400 && res.status < 500 && res.status !== 429)) {
+          await deleteKey(r.key).catch(() => {});
+        }
       } catch {
         // Still offline — bail and try on the next online event.
         return;
@@ -237,7 +251,11 @@ self.addEventListener('notificationclick', (event) => {
   // tab doesn't open.
   let campaign = '';
   try { campaign = new URL(url, self.location.origin).searchParams.get('c') || ''; } catch {}
-  if (campaign) {
+  // Strip anything that wouldn't pass the backend's validateDeviceId
+  // regex (A-Z a-z 0-9 _ -). Mongo ObjectIDs are 24 hex chars and
+  // safe, but users may eventually plug custom slugs in too.
+  const safeCampaign = campaign.replace(/[^A-Za-z0-9_-]/g, '').slice(0, 32);
+  if (safeCampaign && safeCampaign.length >= 5) {   // padding with 'sw-' gives ≥8
     event.waitUntil((async () => {
       try {
         // The SW can't use window.API_BASE — rely on same-origin fetch
@@ -247,8 +265,8 @@ self.addEventListener('notificationclick', (event) => {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            deviceId: 'sw-' + campaign.slice(0, 32),  // synthetic, just for count
-            events: [{ type: 'push_click', target: campaign }],
+            deviceId: 'sw-' + safeCampaign,            // synthetic, just for count
+            events: [{ type: 'push_click', target: safeCampaign }],
             platform: 'web', appVersion: '',
           }),
         }).catch(() => {});

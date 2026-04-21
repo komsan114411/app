@@ -83,7 +83,13 @@ async function tick() {
   try {
     const digest = await buildDigest();
     const { text, html } = renderDigest(digest);
-    const admins = await User.find({ disabledAt: null, role: 'admin' }, { email: 1, displayName: 1 }).lean();
+    // Digest goes to FULL admins only. Editors are per-content users
+    // and don't need the whole-app metrics dump; they can always
+    // eyeball the Analytics tab themselves.
+    const admins = await User.find(
+      { disabledAt: null, role: 'admin', email: { $exists: true, $ne: '' } },
+      { email: 1, displayName: 1 },
+    ).lean();
     const recipients = admins.map(a => a.email).filter(Boolean);
     if (!recipients.length) return;
     await sendMail({

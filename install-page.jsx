@@ -39,12 +39,17 @@ function InstallPage() {
     }
   }, [token]);
 
+  const pageViewFired = React.useRef(false);
   React.useEffect(() => {
     load();
-    // Growth funnel: record this page view exactly once per mount. The
-    // tracking client de-dupes attribution so this also pins the source
-    // token even if the user later visits / with no token.
-    try { if (typeof tracking !== 'undefined') tracking.emit('install_page_view', { target: token }); } catch {}
+    // Growth funnel: record this page view exactly once per user visit.
+    // We gate on a ref (not the effect deps) because the effect re-runs
+    // whenever `load` changes, and we don't want a hot-reload / React
+    // Strict Mode double-mount to inflate the funnel counts.
+    if (!pageViewFired.current) {
+      pageViewFired.current = true;
+      try { if (typeof tracking !== 'undefined') tracking.emit('install_page_view', { target: token }); } catch {}
+    }
     // Real-time sync: if admin changes downloadLinks while page is open,
     // refresh within ~5s without requiring the visitor to reload.
     const id = setInterval(() => { if (!document.hidden) load(); }, 5000);

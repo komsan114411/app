@@ -212,33 +212,48 @@ const btnSecondary = { padding: '8px 14px', borderRadius: 8, border: '1px solid 
 const btnGhost     = { padding: '5px 10px', borderRadius: 6, border: '1px solid rgba(180,70,58,0.3)', background: '#fff', color: '#B4463A', fontFamily: 'inherit', fontSize: 11, cursor: 'pointer' };
 
 // ─── Live SSE feed ────────────────────────────────────────────
+// EventSource can't attach an Authorization header, so we mint a
+// short-lived nonce via /events/mint-token (which DOES authenticate
+// via Bearer) and pass it as ?t=<nonce>. The token has a 2-minute
+// TTL and is single-use on the server side, so a leaked URL can't
+// keep streaming forever.
 function LivePanel() {
   const [events, setEvents] = React.useState([]);
   const [connected, setConnected] = React.useState(false);
+  const [err, setErr] = React.useState('');
   React.useEffect(() => {
     let es = null;
-    try {
-      // EventSource doesn't send auth cookies cross-origin by default,
-      // and can't attach Authorization header — relies on same-origin
-      // session cookie. Works when admin is on the main Railway URL.
-      es = new EventSource(((window.API_BASE || '') + '/api/admin/events/stream'), { withCredentials: true });
-      es.onopen = () => setConnected(true);
-      es.onerror = () => setConnected(false);
-      es.addEventListener('ev', (e) => {
-        try {
-          const ev = JSON.parse(e.data);
-          setEvents(prev => [ev, ...prev].slice(0, 40));
-        } catch {}
-      });
-    } catch {}
-    return () => { if (es) es.close(); };
+    let cancelled = false;
+    (async () => {
+      try {
+        const { token } = await api.mintSseToken();
+        if (cancelled || !token) return;
+        const base = (typeof window !== 'undefined' && window.API_BASE) || '';
+        es = new EventSource(base + '/api/admin/events/stream?t=' + encodeURIComponent(token));
+        es.onopen  = () => { setConnected(true); setErr(''); };
+        es.onerror = () => {
+          setConnected(false);
+          // Auto-refresh the nonce once it expires. 2-minute TTL + small
+          // jitter so we don't hammer when something else is wrong.
+        };
+        es.addEventListener('ev', (e) => {
+          try {
+            const ev = JSON.parse(e.data);
+            setEvents(prev => [ev, ...prev].slice(0, 40));
+          } catch {}
+        });
+      } catch (e) {
+        setErr(e?.message || 'mint_token_failed');
+      }
+    })();
+    return () => { cancelled = true; if (es) es.close(); };
   }, []);
   return (
     <Card>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
         <span style={{ width: 10, height: 10, borderRadius: '50%', background: connected ? '#06C755' : '#B4463A', boxShadow: connected ? '0 0 8px #06C755' : 'none' }}/>
         <span style={{ fontSize: 13, fontWeight: 700 }}>Live activity</span>
-        <span style={{ fontSize: 11, color: '#8F877C' }}>{connected ? 'connected' : 'disconnected'}</span>
+        <span style={{ fontSize: 11, color: '#8F877C' }}>{connected ? 'connected' : (err || 'disconnected')}</span>
       </div>
       {events.length === 0 && <div style={{ fontSize: 12, color: '#8F877C' }}>รอ events…</div>}
       {events.map((e, i) => (

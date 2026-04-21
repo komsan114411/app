@@ -1255,13 +1255,35 @@ adminRouter.get('/anomaly', requireRole('admin', 'editor'), async (req, res) => 
 adminRouter.get('/geo/locale', requireRole('admin', 'editor'), async (req, res) => {
   const days = parseDaysQ(req, 30);
   const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
-  const rows = await Device.aggregate([
-    { $match: { lastSeen: { $gte: since }, locale: { $ne: '' } } },
-    { $group: { _id: { $substrCP: [{ $toLower: '$locale' }, 0, 2] }, count: { $sum: 1 } } },
-    { $sort: { count: -1 } },
-    { $limit: 30 },
-    { $project: { _id: 0, language: '$_id', count: 1 } },
-  ]);
+  let rows = [];
+  try {
+    rows = await Device.aggregate([
+      { $match: { lastSeen: { $gte: since }, locale: { $ne: '' } } },
+      { $group: { _id: { $substrCP: [{ $toLower: '$locale' }, 0, 2] }, count: { $sum: 1 } } },
+      { $sort: { count: -1 } },
+      { $limit: 30 },
+      { $project: { _id: 0, language: '$_id', count: 1 } },
+    ]);
+  } catch (e) {
+    // Fallback for MongoDB < 3.4 that lacks $substrCP: group on full
+    // locale and truncate in JS. Also useful when the locale column
+    // holds unexpected data types.
+    log.warn({ err: e?.message }, 'geo_locale_fallback');
+    const full = await Device.aggregate([
+      { $match: { lastSeen: { $gte: since }, locale: { $ne: '' } } },
+      { $group: { _id: '$locale', count: { $sum: 1 } } },
+    ]);
+    const map = new Map();
+    for (const r of full) {
+      const key = String(r._id || '').toLowerCase().slice(0, 2);
+      if (!key) continue;
+      map.set(key, (map.get(key) || 0) + r.count);
+    }
+    rows = [...map.entries()]
+      .map(([language, count]) => ({ language, count }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 30);
+  }
   res.json({ since, rows });
 });
 
@@ -1269,7 +1291,43 @@ adminRouter.get('/geo/locale', requireRole('admin', 'editor'), async (req, res) 
 // Streams the most recent events every 3 seconds. Intentionally
 // lightweight: the endpoint polls EventLog on a timer and pushes
 // diffs to connected admins. No websocket, no Redis pubsub needed.
-adminRouter.get('/events/stream', requireRole('admin', 'editor'), async (req, res) => {
+//
+// Auth: EventSource cannot attach Authorization headers (HTML spec),
+// so the standard requireAuth/Bearer path doesn't work. The admin
+// mints a short-lived single-use nonce via /events/mint-token (which
+// DOES validate the Bearer), then opens EventSource with ?t=<nonce>.
+// Nonces live in a tiny in-memory Map with a 2-minute TTL and are
+// evicted on use, so a compromised nonce only buys 2 minutes of
+// read-only live-event access.
+const _sseTokens = new Map();  // token → { userId, role, expires }
+const SSE_TTL_MS = 2 * 60_000;
+
+adminRouter.post('/events/mint-token', requireRole('admin', 'editor'), async (req, res) => {
+  const tok = crypto.randomBytes(24).toString('base64url');
+  _sseTokens.set(tok, { userId: req.user.id, role: req.user.role, expires: Date.now() + SSE_TTL_MS });
+  // Opportunistic GC — anytime the Map grows past 200 entries, purge
+  // everything expired. Keeps memory bounded without a timer.
+  if (_sseTokens.size > 200) {
+    const now = Date.now();
+    for (const [k, v] of _sseTokens) if (v.expires < now) _sseTokens.delete(k);
+  }
+  res.json({ token: tok, ttlMs: SSE_TTL_MS });
+});
+
+// No requireRole on this one — we validate the nonce ourselves.
+adminRouter.get('/events/stream', async (req, res) => {
+  const tok = String(req.query.t || '');
+  const entry = _sseTokens.get(tok);
+  if (!entry || entry.expires < Date.now()) {
+    return res.status(401).json({ error: 'invalid_stream_token' });
+  }
+  if (!['admin', 'editor'].includes(entry.role)) {
+    return res.status(403).json({ error: 'forbidden' });
+  }
+  // Force-uncompressed so chunks flush live. The compression middleware
+  // respects the x-no-compression marker (see server.js:311) and won't
+  // sit on the response buffer waiting for it to fill.
+  res.setHeader('x-no-compression', '1');
   res.writeHead(200, {
     'Content-Type':  'text/event-stream',
     'Cache-Control': 'no-cache, no-transform',
